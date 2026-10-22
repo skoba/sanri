@@ -1,0 +1,10 @@
+name = "sanri"
+version = "0.1.0"
+defaultTargets = ["sanri"]
+
+[[lean_lib]]
+name = "Sanri"
+
+[[lean_exe]]
+name = "sanri"
+root = "Main"
