@@ -1,1 +1,6 @@
 /.lake
+
+# 公式配布資料と、その変換・正規化・抜粋はローカルでのみ参照する。
+# このフォルダからGit管理するのは取得・参照方法のREADMEだけ。
+/tensuhyo/*
+!/tensuhyo/README.md
