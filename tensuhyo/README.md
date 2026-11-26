@@ -169,3 +169,24 @@ PYTHONDONTWRITEBYTECODE=1 python3 tools/audit_residual_urine.py \
 提供元の[利用条件](https://www.hpdx.or.jp/riyo.html)には、文書・画像等の無断使用・転載の禁止が明記されています。本プロジェクトでは再配布の許諾を確認できていないため、原本ZIP・PDF・CSVだけでなく、文字コード変換版・正規化JSON・公式データの抜粋Lean等もローカルに留め、公開リポジトリや配布物には含めません。
 
 これらの資料・データはSanriのGPLv3の適用対象外で、権利は各権利者に帰属します。GPLv3の対象外と明記することや文字コード等を変換することは、再配布の許諾を意味しません。
+
+### 追加資料の登録と索引の再生成
+
+令和8年度の疑義解釈・訂正・施設基準は厚生労働省の改定ページ、一部改正通知の写しは関東信越厚生局の通知一覧を参照します。[公式資料台帳](../docs/source-register.md)
+
+`mhlw/r08/` 配下の `clarifications/`、`corrections/`、`facility/`、`amendments/` にPDFと取得元別の `sources.json` を保存します。取得一覧は `source_page`、`downloaded_at`、`downloads` を持ち、各行に `path`、`url`、`title`、`issued_on`、`bytes`、`sha256` を記録します。版を追加するときは資料台帳に出所・発出日・適用日を記録し、ファイル名とSHA-256を `tools/pdf_sources.py` に登録してください。索引の生成時に固定版のハッシュとサイズを検査します。作業ディレクトリはリポジトリのルートです。
+
+```sh
+python3 -m tools.fee_inventory
+python3 -m tools.notice_inventory
+python3 -m tools.procedure_master --as-of 2026-10-22
+python3 -m tools.fee_ledger
+python3 -m tools.r08_inventory
+python3 -m tools.specimen_backlog
+git check-ignore tensuhyo/mhlw/r08/{clarifications,corrections,facility,amendments}/sources.json
+git check-ignore tensuhyo/inventory/{notice-revisions,notice-impact,clarification-index,facility-index,specimen-backlog}.json
+```
+
+`inventory/` に医科通知の改正・訂正位置と比較根拠を含む `notice-revisions.json`、条項台帳・準用コードとの照合を含む `notice-impact.json`、問別の `clarification-index.json`、頁数と見出し候補の `facility-index.json` を出力します。改正に新旧対照表がある場合は該当区分の見出し位置も記録し、段落の抽出には本文の改正文を用います。訂正資料の変更履歴は挿入・取消が同じテキスト層に出る箇所があり、未確定を記録します。施設基準の見出し候補はPDF上の物理頁で、告示の縦書きと通知内の階層・帳票境界はレビューが必要です。
+
+`specimen-backlog.json` の `clarification_questions` は、基準日以前に発出された索引の医科関連の問で当該区分が明示される件数です。対象の置換を識別できた訂正前の問は除きます。索引がない場合は `null` を出力します。件数は明示区分の機械抽出範囲を表します。

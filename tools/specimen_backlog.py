@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 from .fee_coverage import clause_paths
 from .fee_inventory import write_local
 from .fee_ledger import load_lean, read_index
-from .pdf_sources import NOTICE_SOURCE, PRIMARY_SOURCE, require_source
+from .pdf_sources import NOTICE_SOURCE, PRIMARY_SOURCE, R08_AS_OF, require_source
 
 
 def compare_clauses(fee: dict, notice: dict, rules: list[dict]) -> tuple[dict, dict]:
@@ -97,6 +97,21 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict]) -> tuple[dict, d
     return check, {"summary": summary, "rows": rows}
 
 
+def add_question_counts(backlog: dict, questions: dict | None) -> None:
+    counts = Counter()
+    if questions is not None:
+        if questions["as_of"] != R08_AS_OF:
+            raise ValueError("疑義解釈索引の基準日が異なります")
+        for row in questions["questions"]:
+            if (row["issue_relative_to_as_of"] != "after"
+                    and not row["superseded_by_indexed_correction"]
+                    and row["target"] and row["target"].startswith("医科")):
+                counts.update(set(row["codes"]))
+    for row in backlog["rows"]:
+        row["clarification_questions"] = None if questions is None else counts[row["code"]]
+    backlog["clarification_as_of"] = R08_AS_OF if questions is not None else None
+
+
 def main() -> None:
     fee = read_index("fee-index.json")
     notice = read_index("notice-index.json")
@@ -106,6 +121,11 @@ def main() -> None:
     if any(row["status"] == "listed" and "items" not in row for row in fee["rows"]):
         raise ValueError("本文索引を再生成してください")
     check, backlog = compare_clauses(fee, notice, load_lean()["rules"])
+    try:
+        questions = read_index("clarification-index.json")
+    except FileNotFoundError:
+        questions = None
+    add_question_counts(backlog, questions)
     sources = {"fee_source": fee["source"], "notice_source": notice["source"]}
     print(write_local({**sources, **check}, name="notice-ledger-check.json"))
     print(write_local({**sources, **backlog}, name="specimen-backlog.json"))
