@@ -120,6 +120,8 @@ inductive Pair where
   | bileAcids               -- 13、通知(15)の尿中測定
   | carnitineAndD010        -- 23のカルニチン、D010の8
   | bapAndD008              -- 24、D008の27
+  | cystatinAndPentosidine -- 29、31
+  | inulinAndCreatinineClearance -- 32、1（腎クリアランス目的で血清・尿を同時測定）
   deriving DecidableEq, Repr
 
 inductive Choice where
@@ -132,7 +134,8 @@ def Pair.permits (pair : Pair) (linked : Bool) (choice : Choice) : Prop :=
   linked = true →
     match pair with
     | .ketones | .bicarbonateAndBloodGas => choice = .second
-    | .bileAcids | .carnitineAndD010 | .bapAndD008 => choice ≠ .both
+    | .bileAcids | .carnitineAndD010 | .bapAndD008
+    | .cystatinAndPentosidine | .inulinAndCreatinineClearance => choice ≠ .both
 
 instance (pair : Pair) (linked : Bool) (choice : Choice) :
     Decidable (pair.permits linked choice) := by
@@ -164,6 +167,8 @@ def Pair.rule (pair : Pair) : Rule Bool Choice :=
     | .bileAcids => ("D007.15-notice", "PDF356頁 D007(15)")
     | .carnitineAndD010 => ("D007.17e-notice", "PDF357頁 D007(17)エ")
     | .bapAndD008 => ("D007.18-notice", "PDF357頁 D007(18)")
+    | .cystatinAndPentosidine => ("D007.23i-25-notice", "PDF357頁 D007(23)イ・(25)")
+    | .inulinAndCreatinineClearance => ("D007.26-notice", "PDF357頁 D007(26)")
   ⟨id, notice location, pair.permits⟩
 
 private def primary (location : String) : SourceRef :=
