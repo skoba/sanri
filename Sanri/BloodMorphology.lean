@@ -144,9 +144,95 @@ def baseRule : Rule Context (Nat × Nat) :=
   ⟨"D005.base", primary "PDF175–176頁 D005の1〜15",
     fun c r => r.1 = c.item.basePoints⟩
 
+def microscopicStainRule : Rule Context Nat :=
+  ⟨"D005.6-stain", primary "PDF176頁 D005の6の注", fun c p =>
+    c.item = .microscopicDifferential → ∃ stains, c.stains = some stains ∧
+      p = Item.microscopicDifferential.stainRate * stains.eraseDups.length⟩
+
+def marrowStainRule : Rule Context Nat :=
+  ⟨"D005.14-stain", primary "PDF176頁 D005の14の注", fun c p =>
+      c.item = .boneMarrowPicture → ∃ stains, c.stains = some stains ∧
+      p = Item.boneMarrowPicture.stainRate * stains.eraseDups.length⟩
+
+/-- 通知(6)の染色種類は入力型 Stain で固定する。 -/
+def StainPoints (c : Context) (p : Nat) : Prop :=
+  Satisfies [microscopicStainRule, marrowStainRule] c p ∧
+    (c.item ≠ .microscopicDifferential → c.item ≠ .boneMarrowPicture → p = 0)
+
+theorem stainPoints_iff (c : Context) (p : Nat) :
+    StainPoints c p ↔ stainAddition c = some p := by
+  cases hi : c.item <;> cases hc : c.stains <;>
+    simp [StainPoints, satisfies_cons, satisfies_nil, microscopicStainRule, marrowStainRule,
+      stainAddition, Item.stainRate, hi, hc, eq_comm]
+
+/-- モデルで確認する通知の個別要件。ESRの院内要件も保持する。 -/
+def esrPerformanceRule : Rule Context Unit :=
+  ⟨"D005(1)-esrPerformance", notice "PDF338頁 D005(1)", fun c _ =>
+    c.item = .esr → c.esrInHouse = some true ∧
+      (c.esrContracted = some false ∨
+        c.esrContracted = some true ∧ c.esrPromptReport = some true)⟩
+
+def cellClassRule : Rule Context Unit :=
+  ⟨"D005(2)-cellClass", notice "PDF338頁 D005(2)", fun c _ =>
+    c.item = .automatedDifferential ∨ c.item = .microscopicDifferential ∨
+    c.item = .boneMarrowPicture →
+      ∃ classes, c.cellClasses = some classes ∧
+        ∀ k ∈ ([.lymphocyte, .monocyte, .neutrophil, .eosinophil, .basophil] :
+          List CellClass), k ∈ classes⟩
+
+def bloodCountRule : Rule Context Unit :=
+  ⟨"D005(4)-bloodCount", notice "PDF338頁 D005(4)", fun c _ =>
+    c.item = .completeBloodCount → ∃ counts, c.counts = some counts ∧ counts ≠ []⟩
+
+def malariaMethodRule : Rule Context Unit :=
+  ⟨"D005(7)-malariaMethod", notice "PDF338頁 D005(7)", fun c _ =>
+    c.item = .dnaContainingRedCellCount → c.meetsMalariaTestRequirements = some true⟩
+
+def resistanceMethodRule : Rule Context Unit :=
+  ⟨"D005(8)-resistanceMethod", notice "PDF338頁 D005(8)", fun c _ =>
+    c.item = .redCellResistance →
+      ∃ method, c.resistanceMethod = some method ∧ method ≠ .other⟩
+
+def a1cMonthlyRule : Rule Context Unit :=
+  ⟨"D005(9)-a1cMonthly", notice "PDF339頁 D005(9)", fun c _ =>
+    c.item = .hemoglobinA1c → c.a1cMonthlyAllowance = some true⟩
+
+def thymidineKinaseRule : Rule Context Unit :=
+  ⟨"D005(10)-thymidineKinase", notice "PDF339頁 D005(10)", fun c _ =>
+    c.item = .thymidineKinaseActivity → c.meetsDiseaseAndPurpose = some true⟩
+
+def terminalTransferaseRule : Rule Context Unit :=
+  ⟨"D005(11)-terminalTransferase", notice "PDF339頁 D005(11)", fun c _ =>
+    c.item = .terminalDeoxynucleotidylTransferase → c.meetsDiseaseAndPurpose = some true⟩
+
+def tumorAntigenRule : Rule Context Unit :=
+  ⟨"D005(12)-tumorAntigen", notice "PDF339頁 D005(12)", fun c _ =>
+    c.item = .tumorCellAntigens → c.meetsTumorAntigenRequirements = some true⟩
+
+def eligibilityRules : List (Rule Context Unit) :=
+  [esrPerformanceRule, cellClassRule, bloodCountRule,
+    malariaMethodRule, resistanceMethodRule, a1cMonthlyRule,
+    thymidineKinaseRule, terminalTransferaseRule, tumorAntigenRule]
+
+def Eligibility (c : Context) : Prop :=
+  Satisfies eligibilityRules c ()
+
+theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true := by
+  cases hi : c.item <;> simp [Eligibility, eligibilityRules, satisfies_cons, satisfies_nil,
+    esrPerformanceRule, cellClassRule, bloodCountRule,
+    malariaMethodRule, resistanceMethodRule, a1cMonthlyRule, thymidineKinaseRule,
+    terminalTransferaseRule, tumorAntigenRule, eligible, hi]
+  all_goals (try split <;> simp_all)
+  all_goals (try cases hc : c.cellClasses <;> simp_all [List.all_eq_true])
+  all_goals (try cases hc : c.counts <;> simp_all)
+  all_goals (try cases hc : c.resistanceMethod <;> simp_all)
+  all_goals
+    cases h₁ : c.esrInHouse <;> cases h₂ : c.esrContracted <;>
+      simp_all <;> rename_i a b <;> cases a <;> cases b <;> simp_all
+
 def stainRule : Rule Context (Nat × Nat) :=
   ⟨"D005.stains", primary "PDF176頁 D005の6・14の注",
-    fun c r => stainAddition c = some r.2⟩
+    fun c r => StainPoints c r.2⟩
 
 def esrLocationRule : Rule Context (Nat × Nat) :=
   ⟨"D005.1-note", primary "PDF175頁 D005の1の注",
@@ -154,7 +240,7 @@ def esrLocationRule : Rule Context (Nat × Nat) :=
 
 def eligibilityRule : Rule Context (Nat × Nat) :=
   ⟨"D005.eligibility", notice "PDF338–339頁 D005(1)・(2)・(4)・(6)〜(12)",
-    fun c _ => eligible c = some true⟩
+    fun c _ => Eligibility c⟩
 
 def individualRules := [baseRule, stainRule, eligibilityRule, esrLocationRule]
 
@@ -170,7 +256,7 @@ private theorem eligible_esr_in_house (c : Context) (h : eligible c = some true)
 theorem payable_iff (c : Context) (base stain : Nat) :
     Satisfies individualRules c (base, stain) ↔ assess c = .payable base stain := by
   simp only [individualRules, satisfies_cons, satisfies_nil, and_true,
-    baseRule, stainRule, eligibilityRule, esrLocationRule]
+    baseRule, stainRule, eligibilityRule, esrLocationRule, eligibility_iff, stainPoints_iff]
   cases h : eligible c with
   | none => simp [assess, h]
   | some value =>
@@ -190,6 +276,12 @@ theorem individual_determines (c : Context) (base stain : Nat)
   have eq := ((payable_iff c a b).1 first).symm.trans ((payable_iff c x y).1 second)
   cases eq
   rfl
+
+theorem determines_individual_on :
+    DeterminesOn (fun c => Eligibility c ∧ ∃ p, StainPoints c p) individualRules := by
+  rintro c ⟨he, p, hp⟩
+  exact individual_determines c c.item.basePoints p
+    (by simp [assess, (eligibility_iff c).mp he, (stainPoints_iff c p).mp hp])
 
 /-- 同一患者・機関について、個別要件を確認済みの二件を組み合わせる。
 通知でいう同一検体と、マラリア診断目的での併施を別々に入力する。 -/

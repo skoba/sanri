@@ -183,9 +183,79 @@ def urinaryReferenceRule : Rule Context Nat :=
   ⟨"D007.15-reference", notice "PDF356頁 D007(15)", fun c p =>
     c.item = .urinarySulfatedBileAcids → Item.cholesterolFraction.scheduledPoints = some p⟩
 
+def CarnitineContext.Requirements (c : CarnitineContext) : Prop :=
+  c.followsGuidelines = some true ∧ c.enzymaticCycling = some true ∧
+    ((c.indication = some .congenitalMetabolicDisorder ∧
+      c.alreadyClaimedThisMonth = some false) ∨
+     (c.indication = some .listedCarnitineDeficiencyRisk ∧ c.sixMonthLimitAllows = some true))
+
+theorem CarnitineContext.requirements_iff (c : CarnitineContext) :
+    c.Requirements ↔ c.eligible = some true := by
+  cases c
+  rename_i indication guidelines cycling month six
+  cases guidelines with
+  | none => simp [Requirements, eligible]
+  | some g =>
+    cases g <;> simp [Requirements, eligible]
+    case false => cases cycling <;> simp
+    case true =>
+      cases cycling with
+      | none => simp
+      | some e =>
+        cases e <;> simp
+        case true =>
+          cases indication with
+          | none => simp
+          | some indication =>
+            cases indication <;> simp
+
+def urinaryBileAcidMethodRule : Rule Context Unit :=
+  ⟨"D007(15)-urinaryBileAcidMethod", notice "PDF356頁 D007(15)", fun c _ =>
+    c.item = .urinarySulfatedBileAcids →
+    c.urinaryBileAcidsForHepatobiliaryDiagnosis = some true ∧
+    c.urinaryBileAcidsEnzymaticMethod = some true⟩
+
+def ldIsoenzymeMethodRule : Rule Context Unit :=
+  ⟨"D007(16)-ldIsoenzymeMethod", notice "PDF356頁 D007(16)", fun c _ =>
+    c.item = .ldIsoenzyme1 → c.enzymeInhibition = some true⟩
+
+def carnitineRule : Rule Context Unit :=
+  ⟨"D007(17)ア〜ウ-carnitine", notice "PDF356〜357頁 D007(17)ア〜ウ", fun c _ =>
+    c.item = .totalCarnitine ∨ c.item = .freeCarnitine →
+    ∃ details, c.carnitine = some details ∧ details.Requirements⟩
+
+def alpMethodRule : Rule Context Unit :=
+  ⟨"D007(18)-alpMethod", notice "PDF357頁 D007(18)", fun c _ =>
+    c.item = .alpIsoenzymesAndBap →
+    c.agaroseElectrophoresis = some true ∧ c.simultaneousInSameSeries = some true⟩
+
+def apolipoproteinRule : Rule Context Unit :=
+  ⟨"D007(10)-apolipoprotein", notice "PDF356頁 D007(10)", fun c _ =>
+    ∀ measured, c.item = .apolipoproteins measured → measured ≠ []⟩
+
+def eligibilityRules : List (Rule Context Unit) :=
+  [urinaryBileAcidMethodRule, ldIsoenzymeMethodRule, carnitineRule,
+    alpMethodRule, apolipoproteinRule]
+
+def Eligibility (c : Context) : Prop :=
+  Satisfies eligibilityRules c () ∧
+    (c.item = .bloodGas → c.bloodGasInHouse = some true)
+
+private theorem both_iff (a b : Option Bool) :
+    both a b = some true ↔ a = some true ∧ b = some true := by
+  cases a with
+  | none => simp [both]
+  | some value => cases value <;> simp [both]
+
+theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true := by
+  cases hi : c.item <;> simp [Eligibility, eligibilityRules, satisfies_cons, satisfies_nil,
+    urinaryBileAcidMethodRule, ldIsoenzymeMethodRule, carnitineRule,
+    alpMethodRule, apolipoproteinRule, eligible, hi, both_iff]
+  all_goals cases hc : c.carnitine <;> simp [CarnitineContext.requirements_iff]
+
 def eligibilityRule : Rule Context Nat :=
   ⟨"D007.eligibility-9-24", notice "PDF356〜357頁 D007(10)・(15)〜(18)",
-    fun c _ => c.item ≠ .bloodGas → eligible c = some true⟩
+    fun c _ => c.item ≠ .bloodGas → Eligibility c⟩
 
 def bloodGasRule : Rule Context Nat :=
   ⟨"D007.35-note", primary "PDF180頁 D007の35の注",
@@ -201,24 +271,40 @@ theorem scheduled_of_rules (c : Context) (p : Nat) (h : Satisfies individualRule
     simpa [item, Item.scheduledPoints] using ref
   · exact h pointsRule (by simp [individualRules]) item
 
+theorem payable_iff (c : Context) (p : Nat) :
+    Satisfies individualRules c p ↔ assess c = .payable p := by
+  have hs : Satisfies individualRules c p ↔
+      Eligibility c ∧ c.item.scheduledPoints = some p := by
+    constructor
+    · intro h
+      refine ⟨?_, scheduled_of_rules c p h⟩
+      by_cases item : c.item = .bloodGas
+      · have location := h bloodGasRule (by simp [individualRules]) item
+        simpa [eligibility_iff, eligible, item] using location
+      · exact h eligibilityRule (by simp [individualRules]) item
+    · rintro ⟨he, hp⟩
+      simp only [individualRules, satisfies_cons, satisfies_nil]
+      refine ⟨fun _ => hp, ?_, fun _ => he, ?_, trivial⟩
+      · intro item
+        simpa [item, Item.scheduledPoints] using hp
+      · intro item
+        simpa [eligibility_iff, eligible, item] using he
+  rw [hs, eligibility_iff]
+  cases he : eligible c with
+  | none => simp [assess, he]
+  | some value => cases value <;> cases hp : c.item.scheduledPoints <;> simp [assess, he, hp]
+
 theorem determines_individual (c : Context) (p : Nat) (h : assess c = .payable p) :
     DeterminesAt individualRules c := by
-  have facts : eligible c = some true ∧ c.item.scheduledPoints = some p := by
-    cases he : eligible c with
-    | none => simp [assess, he] at h
-    | some value =>
-      cases value
-      · simp [assess, he] at h
-      · cases hp : c.item.scheduledPoints <;> simp_all [assess]
-  refine ⟨⟨p, ?_⟩, ?_⟩
-  · simp only [individualRules, satisfies_cons, satisfies_nil]
-    refine ⟨fun _ => facts.2, ?_, fun _ => facts.1, ?_, trivial⟩
-    · intro item
-      simpa [item, Item.scheduledPoints] using facts.2
-    · intro item
-      simpa [eligible, item] using facts.1
-  · intro a b ha hb
-    exact Option.some.inj ((scheduled_of_rules c a ha).symm.trans (scheduled_of_rules c b hb))
+  refine ⟨⟨p, (payable_iff c p).mpr h⟩, ?_⟩
+  intro a b ha hb
+  exact Option.some.inj ((scheduled_of_rules c a ha).symm.trans (scheduled_of_rules c b hb))
+
+theorem determines_individual_on :
+    DeterminesOn (fun c => Eligibility c ∧ ∃ p, c.item.scheduledPoints = some p)
+      individualRules := by
+  rintro c ⟨he, p, hp⟩
+  exact determines_individual c p (by simp [assess, (eligibility_iff c).mp he, hp])
 
 example : [[], [.aI], [.aI, .b], [.aI, .b, .e], [.aI, .aI]].map apolipoproteinPoints =
     [none, some 31, some 62, some 94, some 31] := by decide

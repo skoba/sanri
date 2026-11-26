@@ -121,6 +121,90 @@ private def notice (location : String) : SourceRef :=
   ⟨.notification, "保医発0305第6号・別添1", "2026-10-07訂正後", location,
     .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
 
+def ManganeseContext.Requirements (c : ManganeseContext) : Prop :=
+  (c.reducedBiliaryExcretion = true → c.atLeastTwoWeeks = some true) ∧
+  (c.reducedBiliaryExcretion = false → c.atLeastOneMonth = some true) ∧
+  c.intervalAllows = some true
+
+theorem ManganeseContext.requirements_iff (c : ManganeseContext) :
+    c.Requirements ↔ c.eligible = some true := by
+  cases hb : c.reducedBiliaryExcretion <;>
+    simp [Requirements, eligible, hb]
+  · cases hd : c.atLeastOneMonth with
+    | none => simp
+    | some duration => cases duration <;> simp
+  · cases hd : c.atLeastTwoWeeks with
+    | none => simp
+    | some duration => cases duration <;> simp
+
+private def methodsSource : SourceRef :=
+  ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "2026-10-22取得版",
+    "PDF179頁 D007の1", .checkedAgainstSource,
+    some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩
+
+def albuminRule : Rule Draw Item :=
+  ⟨"D007.1-albumin-method", methodsSource,
+    fun c item => item = .albumin → c.albuminByModifiedBCP = some true⟩
+
+def creatinineRule : Rule Draw Item :=
+  ⟨"D007.4", notice "PDF356頁 D007(4)",
+    fun c item => item = .creatinine → c.creatinineByJaffe = some false⟩
+
+def ketoneGlucoseChlorideRule : Rule Draw Item :=
+  ⟨"D007.1-ketone-glucose-chloride-method", methodsSource, fun c item =>
+    item = .bloodKetoneGlucoseChloride → c.ketoneGlucoseChlorideMethodAllowed = some true⟩
+
+def manganeseRule : Rule Draw Item :=
+  ⟨"D007.8", notice "PDF356頁 D007(8)", fun c item =>
+    item = .manganese → ∃ details, c.manganese = some details ∧ details.Requirements⟩
+
+def eligibilityRules := [albuminRule, creatinineRule, ketoneGlucoseChlorideRule, manganeseRule]
+
+theorem eligible_iff (c : Draw) (item : Item) :
+    Satisfies eligibilityRules c item ↔ c.eligible item = some true := by
+  cases item <;> simp [eligibilityRules, satisfies_cons, satisfies_nil,
+    albuminRule, creatinineRule, ketoneGlucoseChlorideRule, manganeseRule, Draw.eligible]
+  · cases c.manganese <;> simp [ManganeseContext.requirements_iff]
+
+/-- 組合せ選択後の一採血で、二組それぞれに算定対象があるかを表す。 -/
+def sodiumChlorideRule : Rule (List Item) (Bool × Bool) :=
+  ⟨"D007.1-notice", notice "PDF355頁 D007(1)", fun items presence =>
+    presence.1 = true ↔ .sodium ∈ items ∨ .chloride ∈ items⟩
+
+def phosphorusPhosphateRule : Rule (List Item) (Bool × Bool) :=
+  ⟨"D007.6-notice", notice "PDF356頁 D007(6)", fun items presence =>
+    presence.2 = true ↔ .inorganicPhosphorus ∈ items ∨ .phosphate ∈ items⟩
+
+def mergedItemRules := [sodiumChlorideRule, phosphorusPhosphateRule]
+
+/-- 既存の代表元への変換と重複除去が、各組の有無を保存する。 -/
+theorem mergedItemRules_iff (items : List Item) (presence : Bool × Bool) :
+    Satisfies mergedItemRules items presence ↔
+      presence = (((items.map Item.billingItem).eraseDups).contains .sodium,
+        ((items.map Item.billingItem).eraseDups).contains .inorganicPhosphorus) := by
+  have hs (item : Item) : item.billingItem = .sodium ↔ item = .sodium ∨ item = .chloride := by
+    cases item <;> decide
+  have hp (item : Item) :
+      item.billingItem = .inorganicPhosphorus ↔ item = .inorganicPhosphorus ∨ item = .phosphate := by
+    cases item <;> decide
+  have sodium : .sodium ∈ (items.map Item.billingItem).eraseDups ↔
+      .sodium ∈ items ∨ .chloride ∈ items := by
+    simp [List.mem_map, hs, and_or_left, exists_or]
+  have phosphorus : .inorganicPhosphorus ∈ (items.map Item.billingItem).eraseDups ↔
+      .inorganicPhosphorus ∈ items ∨ .phosphate ∈ items := by
+    simp [List.mem_map, hp, and_or_left, exists_or]
+  rcases presence with ⟨s, p⟩
+  simp only [mergedItemRules, satisfies_cons, satisfies_nil, sodiumChlorideRule,
+    phosphorusPhosphateRule, and_true, Prod.mk.injEq, ← sodium, ← phosphorus]
+  simp only [List.contains_eq_mem]
+  cases s <;> cases p <;> simp
+
+theorem determines_merged_items_on : DeterminesOn (fun _ => True) mergedItemRules := by
+  intro items _
+  refine ⟨⟨_, (mergedItemRules_iff items _).mpr rfl⟩, ?_⟩
+  intro a b ha hb
+  exact ((mergedItemRules_iff items a).mp ha).trans ((mergedItemRules_iff items b).mp hb).symm
+
 /-- 算定対象に整理済みの項目から、出典本文の各点数帯を関係として表す。 -/
 def pointsRule : Rule (List Item) Nat :=
   ⟨"D007.1-8-note",
@@ -149,6 +233,9 @@ theorem determines_points (items : List Item) : DeterminesAt [pointsRule] items 
   · intro a b ha hb
     exact ((pointsRule_iff _ _).1 (ha pointsRule (by simp))).trans
       (((pointsRule_iff _ _).1 (hb pointsRule (by simp))).symm)
+
+theorem determines_points_on : DeterminesOn (fun _ => True) [pointsRule] :=
+  fun items _ => determines_points items
 
 /-- 同時・併測の事実を固定した場合に、組合せから算定する件数。 -/
 private def pairedRule (id location : String) (group : List Item) (count : Nat) :

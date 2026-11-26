@@ -100,9 +100,90 @@ def pointsRule : Rule Context Nat :=
       some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,
     fun c p => p = c.item.points⟩
 
+private def MethodIn (method : Option Method) (allowed : List Method) : Prop :=
+  ∃ m, method = some m ∧ m ∈ allowed
+
+private theorem methodIn_iff (method : Option Method) (allowed : List Method) :
+    MethodIn method allowed ↔ method.map (allowed.contains ·) = some true := by
+  cases method <;> simp [MethodIn]
+
+private theorem requires_iff (a b : Option Bool) :
+    requires a b = some true ↔ a = some true ∧ b = some true := by
+  cases a with
+  | none => simp [requires]
+  | some value => cases value <;> simp [requires]
+
+def VitaminDRequirements (c : Context) : Prop :=
+  MethodIn c.method [.eclia, .clia, .cleia] ∧
+  ((c.vitaminDIndication = some .primaryOsteoporosisTreatmentSelection ∧
+    c.followsVitaminDGuidelines = some true ∧ c.vitaminDFirstForIndication = some true) ∨
+   (c.vitaminDIndication = some .deficiencyDiagnosis ∧
+    c.vitaminDFirstForIndication = some true) ∨
+   (c.vitaminDIndication = some .deficiencyTreatment ∧ c.threeMonthLimitAllows = some true))
+
+private theorem vitaminD_iff (c : Context) :
+    VitaminDRequirements c ↔ vitaminDEligible c = some true := by
+  cases hm : c.method with
+  | none => simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm]
+  | some m =>
+    cases hi : c.vitaminDIndication with
+    | none => cases m <;> simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm, hi]
+    | some indication =>
+      cases indication <;> cases m <;>
+        simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm, hi, requires_iff]
+
+def lipoproteinIntervalRule : Rule Context Unit :=
+  ⟨"D007(19)-lipoproteinInterval", notice "PDF357頁 D007(19)", fun c _ =>
+    c.item = .lipoproteinA → c.threeMonthLimitAllows = some true⟩
+
+def heparinWindowRule : Rule Context Unit :=
+  ⟨"D007(20)-heparinWindow", notice "PDF357頁 D007(20)", fun c _ =>
+    c.item = .heparin → c.heparinFirstInWindow = some true⟩
+
+def lungMarkerMethodsRule : Rule Context Unit :=
+  ⟨"D007(21)-lungMarkerMethods", notice "PDF357頁 D007(21)", fun c _ =>
+    (c.item = .kl6 → MethodIn c.method [.eia, .eclia, .latexAgglutinationTurbidimetry]) ∧
+      (c.item = .surfactantProteinA → c.method = some .eia) ∧
+      (c.item = .surfactantProteinD → MethodIn c.method [.eia, .latexImmunoturbidimetry])⟩
+
+def cystatinMethodAndIntervalRule : Rule Context Unit :=
+  ⟨"D007(23)ア-cystatinMethodAndInterval", notice "PDF357頁 D007(23)ア", fun c _ =>
+    c.item = .cystatinC →
+    MethodIn c.method [.eia, .latexAgglutinationTurbidimetry, .colloidalGoldAgglutination,
+      .nephelometry] ∧ c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
+      c.threeMonthLimitAllows = some true⟩
+
+def vitaminDRule : Rule Context Unit :=
+  ⟨"D007(24)-vitaminD", notice "PDF357頁 D007(24)", fun c _ =>
+    c.item = .vitaminD25 → VitaminDRequirements c⟩
+
+def pentosidineRule : Rule Context Unit :=
+  ⟨"D007(25)-pentosidine", notice "PDF357頁 D007(25)", fun c _ =>
+    c.item = .pentosidine → c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
+    c.dueToDiabeticNephropathy = some false ∧ c.threeMonthLimitAllows = some true⟩
+
+def inulinRule : Rule Context Unit :=
+  ⟨"D007(26)-inulin", notice "PDF357頁 D007(26)", fun c _ =>
+    c.item = .inulin → c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
+    c.sixMonthLimitAllows = some true⟩
+
+def eligibilityRules : List (Rule Context Unit) :=
+  [lipoproteinIntervalRule, heparinWindowRule, lungMarkerMethodsRule,
+    cystatinMethodAndIntervalRule, vitaminDRule, pentosidineRule,
+    inulinRule]
+
+def Eligibility (c : Context) : Prop :=
+  Satisfies eligibilityRules c ()
+
+theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true := by
+  cases hi : c.item <;>
+    simp [Eligibility, eligibilityRules, satisfies_cons, satisfies_nil,
+    lipoproteinIntervalRule, heparinWindowRule, lungMarkerMethodsRule,
+    cystatinMethodAndIntervalRule, vitaminDRule, pentosidineRule, inulinRule, eligible, hi, methodIn_iff, vitaminD_iff, requires_iff]
+
 def eligibilityRule : Rule Context Nat :=
   ⟨"D007.19-26-notice", notice "PDF357頁 D007(19)〜(21)・(23)〜(26)の個別条件",
-    fun c _ => eligible c = some true⟩
+    fun c _ => Eligibility c⟩
 
 def individualRules := [pointsRule, eligibilityRule]
 
@@ -110,9 +191,21 @@ theorem determines_individual (c : Context) (h : eligible c = some true) :
     DeterminesAt individualRules c := by
   refine ⟨⟨c.item.points, ?_⟩, ?_⟩
   · simp only [individualRules, satisfies_cons, satisfies_nil]
-    exact ⟨rfl, h, trivial⟩
+    exact ⟨rfl, (eligibility_iff c).mpr h, trivial⟩
   · intro a b ha hb
     exact (ha pointsRule (by simp [individualRules])).trans (hb pointsRule (by simp [individualRules])).symm
+
+theorem payable_iff (c : Context) (p : Nat) :
+    Satisfies individualRules c p ↔ assess c = .payable p := by
+  simp only [individualRules, satisfies_cons, satisfies_nil, and_true,
+    pointsRule, eligibilityRule, eligibility_iff]
+  cases h : eligible c with
+  | none => simp [assess, h]
+  | some value => cases value <;> simp [assess, h, eq_comm]
+
+theorem determines_individual_on : DeterminesOn Eligibility individualRules := by
+  intro c h
+  exact determines_individual c ((eligibility_iff c).mp h)
 
 /-- (21)の併施群、又は(22)の同一暦月のトロポニンI・Tの実施群を入力する。 -/
 inductive Group where

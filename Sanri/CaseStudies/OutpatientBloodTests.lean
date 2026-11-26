@@ -104,45 +104,288 @@ private def notice (location : String) : SourceRef :=
   ⟨.notification, "保医発0305第6号・別添1", "2026-10-07訂正後",
     location, .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
 
+private def chemistryDraw (c : Context) : BloodChemistry.Draw :=
+  { performed := [], albuminByModifiedBCP := c.albuminByModifiedBCP,
+    creatinineByJaffe := c.creatinineByJaffe }
+
+private def Rejected (c : Context) (item : ChemistryItem) : Prop :=
+  (item = .albumin ∧ c.albuminByModifiedBCP = some false) ∨
+  (item = .creatinine ∧ c.creatinineByJaffe = some true)
+
+private theorem rejected_iff (c : Context) (item : ChemistryItem) :
+    Rejected c item ↔ eligible c item = some false := by
+  cases item <;> simp [Rejected, eligible, ChemistryItem.toBloodChemistry,
+    BloodChemistry.Draw.eligible]
+
+private inductive Classified (c : Context) : List Measurement → List Measurement → Prop where
+  | nil : Classified c [] []
+  | keep {m rest items} :
+      Satisfies BloodChemistry.eligibilityRules (chemistryDraw c) m.item.toBloodChemistry →
+      Classified c rest items → Classified c (m :: rest) (m :: items)
+  | drop {m rest items} :
+      Rejected c m.item → Classified c rest items → Classified c (m :: rest) items
+
+private theorem filterAux_reverse (f : Measurement → Option Bool)
+    (items acc : List Measurement) :
+    (List.filterAuxM f items acc).map List.reverse =
+      (items.filterM f).map (acc.reverse ++ ·) := by
+  have aux (xs acc tail : List Measurement) :
+      List.filterAuxM f xs (acc ++ tail) =
+        (List.filterAuxM f xs acc).map (· ++ tail) := by
+    induction xs generalizing acc with
+    | nil => rfl
+    | cons head rest ih =>
+      cases hf : f head with
+      | none => simp [hf]
+      | some b =>
+        cases b
+        · simpa [hf] using ih acc
+        · simpa [hf] using ih (head :: acc)
+  have h := congrArg (Option.map List.reverse) (aux items [] acc)
+  cases hc : List.filterAuxM f items [] <;>
+    simpa [List.filterM, hc, List.reverse_append] using h
+
+private theorem filterM_cons (f : Measurement → Option Bool)
+    (m : Measurement) (rest : List Measurement) :
+    (m :: rest).filterM f =
+      (f m).bind (fun keep => (rest.filterM f).map (fun items =>
+        if keep then m :: items else items)) := by
+  cases hf : f m with
+  | none => simp [List.filterM, hf]
+  | some b =>
+    have eq (acc : List Measurement) :
+        (List.filterAuxM f rest acc).bind (some ∘ List.reverse) =
+          (rest.filterM f).map (acc.reverse ++ ·) := by
+      simpa [Option.map_eq_bind, Function.comp_def] using filterAux_reverse f rest acc
+    cases b
+    · simp [List.filterM, hf]
+    · simpa [List.filterM, hf, Function.comp_def] using eq [m]
+
+private theorem classified_iff (c : Context) (performed items : List Measurement) :
+    Classified c performed items ↔ performed.filterM (fun m => eligible c m.item) = some items := by
+  induction performed generalizing items with
+  | nil =>
+    constructor
+    · intro h
+      cases h
+      rfl
+    · intro h
+      simpa using (show Classified c ([] : List Measurement) [] from .nil)
+        |> fun proof => (Option.some.inj h) ▸ proof
+  | cons m rest ih =>
+    constructor
+    · intro h
+      cases h with
+      | keep hm hs =>
+        have he : eligible c m.item = some true := (BloodChemistry.eligible_iff _ _).mp hm
+        simp [filterM_cons, he, (ih _).mp hs]
+      | drop hm hs =>
+        simp [filterM_cons, (rejected_iff _ _).mp hm, (ih _).mp hs]
+    · intro h
+      cases he : eligible c m.item with
+      | none => simp [filterM_cons, he] at h
+      | some b =>
+        cases hs : rest.filterM (fun m => eligible c m.item) <;>
+          cases b <;> simp [filterM_cons, he, hs] at h
+        · subst items
+          exact .drop ((rejected_iff _ _).mpr he) ((ih _).mpr hs)
+        · subst items
+          exact .keep ((BloodChemistry.eligible_iff _ _).mpr he) ((ih _).mpr hs)
+
+private def ChemistrySelection (c : Context) (items : List Measurement) : Prop :=
+  c.chemistry.eraseDups = c.chemistry ∧ Classified c c.chemistry items
+
+private theorem chemistrySelection_iff (c : Context) (items : List Measurement) :
+    ChemistrySelection c items ↔ chemistryItems c = some items := by
+  by_cases h : c.chemistry.eraseDups = c.chemistry <;>
+    simp [ChemistrySelection, chemistryItems, h, classified_iff]
+
+private def DrawPoints (items : List Measurement) : List Nat → Nat → Prop
+  | [], p => p = 0
+  | draw :: rest, p =>
+    ∃ points remaining,
+      BloodChemistry.pointsRule.holds
+        ((items.filter (fun m => m.draw == draw)).map (·.item.toBloodChemistry)) points ∧
+      DrawPoints items rest remaining ∧ p = points + remaining
+
+private def ChemistryPoints (items : List Measurement) (p : Nat) : Prop :=
+  DrawPoints items (items.map Measurement.draw).eraseDups p
+
+private theorem chemistryPoints_iff (items : List Measurement) (p : Nat) :
+    ChemistryPoints items p ↔ p = chemistryPoints items := by
+  unfold ChemistryPoints chemistryPoints
+  generalize (items.map Measurement.draw).eraseDups = draws
+  induction draws generalizing p with
+  | nil => rfl
+  | cons draw rest ih =>
+    simp [DrawPoints, BloodChemistry.pointsRule_iff, ih]
+
+private def CountPoints (items : List BloodCountItem) (p : Nat) : Prop :=
+  (items = [] → p = 0) ∧ (items ≠ [] → p = BloodMorphology.Item.completeBloodCount.basePoints)
+
+private theorem countPoints_iff (items : List BloodCountItem) (p : Nat) :
+    CountPoints items p ↔ p = bloodCountPoints items := by
+  cases items <;> simp [CountPoints, bloodCountPoints]
+
+private def JudgmentPoints (count : List BloodCountItem) (items : List Measurement)
+    (earlier : List SpecimenJudgment.Category) (p : Nat) : Prop :=
+  ∃ hematological biochemical : Nat,
+    ((count ≠ [] ∧ .hematological ∉ earlier) →
+      hematological = SpecimenJudgment.scheduledPoints .hematological) ∧
+    (¬ (count ≠ [] ∧ .hematological ∉ earlier) → hematological = 0) ∧
+    ((items ≠ [] ∧ .biochemicalI ∉ earlier) →
+      biochemical = SpecimenJudgment.scheduledPoints .biochemicalI) ∧
+    (¬ (items ≠ [] ∧ .biochemicalI ∉ earlier) → biochemical = 0) ∧
+    p = hematological + biochemical
+
+private theorem judgmentPoints_iff (count : List BloodCountItem) (items : List Measurement)
+    (earlier : List SpecimenJudgment.Category) (p : Nat) :
+    JudgmentPoints count items earlier p ↔ judgmentPoints count items earlier = some p := by
+  by_cases hh : SpecimenJudgment.Category.hematological ∈ earlier <;>
+    by_cases hb : SpecimenJudgment.Category.biochemicalI ∈ earlier <;>
+    cases count <;> cases items <;>
+    simp [JudgmentPoints, judgmentPoints, SpecimenJudgment.points, SpecimenJudgment.assess,
+      SpecimenJudgment.Assessment.total, SpecimenJudgment.allCategories,
+      SpecimenJudgment.categoryFor, SpecimenJudgment.geneRouting,
+      BloodMorphology.Item.judgmentTest, BloodMorphology.Item.number,
+      SpecimenJudgment.boneMarrowEligible, SpecimenJudgment.immunoelectrophoresisEligible,
+      hh, hb, eq_comm (a := p)]
+
+private def CollectionScope (c : SpecimenCollection.Context) : Prop :=
+  c.item = .venousBlood ∧ c.inpatient = false ∧ 6 ≤ c.ageYears ∧
+  c.insuranceMedicalInstitution = true ∧ c.performed = true
+
+private def SeparateCollection (c : SpecimenCollection.Context) (charged : Bool) : Prop :=
+  c.duringSurgery = false ∧ c.commonProcedureClaimedSameDay = false ∧
+  c.bloodCircuitSampling = false ∧ c.dailyAlreadyClaimed = false ∧ charged = false
+
+private def CollectionPoints (c : SpecimenCollection.Context) (charged : Bool) (p : Nat) : Prop :=
+  CollectionScope c ∧
+    (SeparateCollection c charged → p = SpecimenCollection.basePoints .venousBlood) ∧
+    (¬ SeparateCollection c charged → p = 0)
+
+private theorem collectionPoints_iff (c : SpecimenCollection.Context) (charged : Bool) (p : Nat) :
+    CollectionPoints c charged p ↔ collectionPoints c charged = some p := by
+  by_cases hi : c.item = .venousBlood <;> by_cases ha : 6 ≤ c.ageYears <;>
+    cases hn : c.inpatient <;> cases hm : c.insuranceMedicalInstitution <;>
+    cases hp : c.performed <;>
+    simp [CollectionPoints, CollectionScope, collectionPoints, hi, ← Nat.not_le, ha, hn, hm, hp,
+      SpecimenCollection.points, SpecimenCollection.assess]
+  cases hs : c.duringSurgery <;> cases hc : c.commonProcedureClaimedSameDay <;>
+    cases hb : c.bloodCircuitSampling <;> cases hd : c.dailyAlreadyClaimed <;> cases charged <;>
+    simp [SeparateCollection, hs, hc, hb, hd, SpecimenCollection.notSeparateReason,
+      SpecimenCollection.eligible, SpecimenCollection.Assessment.total, SpecimenCollection.isD400,
+      SpecimenCollection.isDaily, SpecimenCollection.isSeries, SpecimenCollection.isUnilateral,
+      SpecimenCollection.infantPoints, ha, eq_comm]
+
 def rules : List (Rule Context Breakdown) :=
   [⟨"D005.5", primary "PDF176頁 D005の5",
-      fun c r => r.count = bloodCountPoints c.bloodCount⟩,
+      fun c r => CountPoints c.bloodCount r.count⟩,
    ⟨"D005.4-notice", notice "PDF338頁 D005(4)",
       fun c r => (r.count > 0 ↔ c.bloodCount ≠ [])⟩,
    ⟨"D007.1.3-and-note", primary "PDF179・181頁 D007の1・3及び注イ・ロ",
-      fun c r => ∃ items, chemistryItems c = some items ∧ r.chemistry = chemistryPoints items⟩,
+      fun c r => ∃ items, ChemistrySelection c items ∧ ChemistryPoints items r.chemistry⟩,
    ⟨"D007.4-notice", notice "PDF356頁 D007(4)",
-      fun c _ => ∀ items, chemistryItems c = some items →
+      fun c _ => ∀ items, ChemistrySelection c items →
         c.creatinineByJaffe = some true → ∀ m ∈ items, m.item ≠ .creatinine⟩,
    ⟨"D026.3.4-and-note1", primary "PDF192頁 D026の3・4及び注1",
-      fun c r => ∃ items earlier, chemistryItems c = some items ∧
+      fun c r => ∃ items earlier, ChemistrySelection c items ∧
         c.earlierTestCategoriesThisMonth = some earlier ∧
-        judgmentPoints c.bloodCount items earlier = some r.judgment⟩,
+        JudgmentPoints c.bloodCount items earlier r.judgment⟩,
    ⟨"D026.2.3-notice", notice "PDF402頁 D026(2)・(3)",
       fun c r => ∀ earlier, c.earlierTestCategoriesThisMonth = some earlier →
         (.hematological ∈ earlier → .biochemicalI ∈ earlier → r.judgment = 0)⟩,
    ⟨"D400-and-collection-general", primary "PDF210頁 第4節通則・D400",
       fun c r => ∃ charged, c.d400AlreadyChargedToday = some charged ∧
-        collectionPoints c.collection charged = some r.collection⟩]
+        CollectionPoints c.collection charged r.collection⟩]
+
+private theorem classified_excludes_jaffe (c : Context) (performed items : List Measurement)
+    (h : Classified c performed items) (hj : c.creatinineByJaffe = some true) :
+    ∀ m ∈ items, m.item ≠ .creatinine := by
+  induction h with
+  | nil => simp
+  | drop _ _ ih => exact ih
+  | @keep m rest items he _ ih =>
+    intro other member
+    rcases List.mem_cons.mp member with same | tail
+    · subst other
+      intro item
+      have hc := he BloodChemistry.creatinineRule (by simp [BloodChemistry.eligibilityRules])
+      have forbidden := hc (by simp [item, ChemistryItem.toBloodChemistry])
+      change c.creatinineByJaffe = some false at forbidden
+      simp [hj] at forbidden
+    · exact ih other tail
+
+theorem assessed_iff (c : Context) (r : Breakdown) :
+    Satisfies rules c r ↔ assess c = some r := by
+  simp only [rules, satisfies_cons, satisfies_nil, and_true]
+  constructor
+  · rintro ⟨hc, _, ⟨otherItems, ho, hChem⟩, _, ⟨items, earlier, hi, he, hj⟩, _,
+      charged, hd, hs⟩
+    have h₁ := (chemistrySelection_iff c items).mp hi
+    have h₂ := (chemistrySelection_iff c otherItems).mp ho
+    have same := Option.some.inj (h₂.symm.trans h₁)
+    subst otherItems
+    cases r with
+    | mk count chemistry judgment collection =>
+      change CountPoints c.bloodCount count at hc
+      change ChemistryPoints items chemistry at hChem
+      simp [assess, h₁, he, hd, ((countPoints_iff _ _).mp hc).symm,
+        ((chemistryPoints_iff _ _).mp hChem).symm,
+        (judgmentPoints_iff _ _ _ _).mp hj, (collectionPoints_iff _ _ _).mp hs]
+  · intro h
+    cases hi : chemistryItems c <;> cases he : c.earlierTestCategoriesThisMonth <;>
+      cases hd : c.d400AlreadyChargedToday <;> simp [assess, hi, he, hd] at h
+    rename_i items earlier charged
+    cases hj : judgmentPoints c.bloodCount items earlier <;>
+      cases hs : collectionPoints c.collection charged <;> simp [hj, hs] at h
+    subst r
+    have selection := (chemistrySelection_iff c items).mpr hi
+    have judgment := (judgmentPoints_iff _ _ _ _).mpr hj
+    refine ⟨(countPoints_iff _ _).mpr rfl, ?_,
+      ⟨items, selection, (chemistryPoints_iff _ _).mpr rfl⟩, ?_,
+      ⟨items, earlier, selection, rfl, judgment⟩, ?_,
+      ⟨charged, rfl, (collectionPoints_iff _ _ _).mpr hs⟩⟩
+    · cases c.bloodCount <;> simp [bloodCountPoints, BloodMorphology.Item.basePoints]
+    · intro selected hselected hjaffe
+      exact classified_excludes_jaffe c _ _ hselected.2 hjaffe
+    · intro history hhistory hh hb
+      have same := Option.some.inj hhistory
+      subst history
+      obtain ⟨a, b, _, h₁, _, h₂, total⟩ := judgment
+      simp [hh, hb] at h₁ h₂
+      simpa [h₁, h₂] using total
 
 /-- 規則が結果を許容する場合、その内訳は計算結果と一致する。 -/
 theorem satisfies_implies_assessed {c : Context} {r : Breakdown} (h : Satisfies rules c r) :
-    assess c = some r := by
-  simp only [rules, satisfies_cons, satisfies_nil] at h
-  change r.count = bloodCountPoints c.bloodCount ∧ _ at h
-  obtain ⟨hc, _, ⟨otherItems, ho, hChem⟩, _, ⟨items, earlier, hi, he, hj⟩, _,
-    ⟨charged, hd, hs⟩, _⟩ := h
-  cases r with
-  | mk count chemistry judgment collection =>
-    rw [hi] at ho
-    cases Option.some.inj ho
-    change judgmentPoints c.bloodCount otherItems earlier = some judgment at hj
-    change collectionPoints c.collection charged = some collection at hs
-    change count = bloodCountPoints c.bloodCount at hc
-    change chemistry = chemistryPoints otherItems at hChem
-    subst count
-    subst chemistry
-    simp [assess, hi, he, hd, hj, hs]
+    assess c = some r :=
+  (assessed_iff c r).mp h
+
+def Scope (c : Context) : Prop :=
+  (∃ items, ChemistrySelection c items) ∧
+  (∃ earlier, c.earlierTestCategoriesThisMonth = some earlier) ∧
+  (∃ charged, c.d400AlreadyChargedToday = some charged) ∧ CollectionScope c.collection
+
+theorem determines_on : DeterminesOn Scope rules := by
+  rintro c ⟨⟨items, hi⟩, ⟨earlier, he⟩, ⟨charged, hd⟩, hc⟩
+  classical
+  let collection := if SeparateCollection c.collection charged then
+    SpecimenCollection.basePoints .venousBlood else 0
+  let hematological := if c.bloodCount ≠ [] ∧ .hematological ∉ earlier then
+    SpecimenJudgment.scheduledPoints .hematological else 0
+  let biochemical := if items ≠ [] ∧ .biochemicalI ∉ earlier then
+    SpecimenJudgment.scheduledPoints .biochemicalI else 0
+  have hj : JudgmentPoints c.bloodCount items earlier (hematological + biochemical) :=
+    ⟨hematological, biochemical, fun h => ite_eq_left h, fun h => ite_eq_right h,
+      fun h => ite_eq_left h, fun h => ite_eq_right h, rfl⟩
+  have hs : CollectionPoints c.collection charged collection :=
+    ⟨hc, fun h => ite_eq_left h, fun h => ite_eq_right h⟩
+  refine ⟨⟨⟨bloodCountPoints c.bloodCount, chemistryPoints items,
+    hematological + biochemical, collection⟩, (assessed_iff c _).mpr ?_⟩, ?_⟩
+  · simp [assess, (chemistrySelection_iff _ _).mp hi, he, hd,
+      (judgmentPoints_iff _ _ _ _).mp hj, (collectionPoints_iff _ _ _).mp hs]
+  · intro a b ha hb
+    exact Option.some.inj ((satisfies_implies_assessed ha).symm.trans (satisfies_implies_assessed hb))
 
 def exampleContext : Context where
   bloodCount := [.redCells, .whiteCells, .hemoglobin, .hematocrit, .platelets]
@@ -155,15 +398,7 @@ def exampleContext : Context where
   collection := { item := .venousBlood, ageYears := 40 }
 
 theorem example_satisfies : Satisfies rules exampleContext ⟨21, 99, 269, 40⟩ := by
-  simp only [rules, satisfies_cons, satisfies_nil]
-  refine ⟨rfl, ?_, ⟨exampleContext.chemistry, rfl, rfl⟩, ?_,
-    ⟨exampleContext.chemistry, [], rfl, rfl, rfl⟩, ?_, ⟨false, rfl, rfl⟩, trivial⟩
-  · decide
-  · intro _ _ hj
-    cases hj
-  · intro earlier he
-    cases Option.some.inj he
-    simp
+  exact (assessed_iff _ _).mpr (by decide)
 
 theorem example_determines : DeterminesAt rules exampleContext := by
   refine ⟨⟨_, example_satisfies⟩, ?_⟩

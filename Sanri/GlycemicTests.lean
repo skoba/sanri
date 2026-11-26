@@ -125,9 +125,26 @@ def additionalRule : Rule Month (Option Performance) :=
       month.exception = some .clinical ∨
         (month.exception = some .clozapine ∧ item.item.isA1c = true)⟩
 
+def MethodAllowed : Item → Prop
+  | .glycatedAlbumin method => ∃ m, method = some m ∧ m ≠ .other
+  | _ => True
+
+theorem methodAllowed_iff (item : Item) : MethodAllowed item ↔ item.methodAllowed = some true := by
+  cases item with
+  | glycatedAlbumin method => cases method <;> simp [MethodAllowed, Item.methodAllowed]
+  | _ => simp [MethodAllowed, Item.methodAllowed]
+
+private theorem additional_iff (m : Month) (extra : Performance) :
+    additionalRule.holds m (some extra) ↔ extraAllowed m extra.item = some true := by
+  change (∀ item, some extra = some item → _) ↔ _
+  simp only [Option.some.injEq, forall_eq']
+  cases hm : m.exception with
+  | none => simp [extraAllowed, hm]
+  | some e => cases e <;> simp [extraAllowed, hm]
+
 def albuminMethodRule : Rule Unit Item :=
   ⟨"D007.13", notice "PDF356頁 D007(13)",
-    fun _ item => item.methodAllowed = some true⟩
+    fun _ item => MethodAllowed item⟩
 
 /-- 二つの通知が共通して定める、例外のない場合の上限。 -/
 def ordinaryRules : List (Rule Month (List Nat)) :=
@@ -142,22 +159,80 @@ theorem ordinary_no_two (m : Month) (charged : List Nat)
   simp only [ordinaryRules, satisfies_cons] at h
   exact h.1 hm performed
 
+/-- 固定した算定案に対応する実施と、その方法・例外条件。 -/
+def Selected (history : Option Month) (s : Selection)
+    (principal : Performance) (extra : Option Performance) : Prop :=
+  ∃ m, history = some m ∧ m.uniqueIds = true ∧
+    m.find s.principal = some principal ∧ albuminMethodRule.holds () principal.item ∧
+    (s.additional = none ∧ extra = none ∨
+      ∃ id e, s.additional = some id ∧ s.principal ≠ id ∧
+        m.find id = some e ∧ extra = some e ∧
+        albuminMethodRule.holds () e.item ∧ additionalRule.holds m extra)
+
+theorem selected_iff (history : Option Month) (s : Selection)
+    (principal : Performance) (extra : Option Performance) :
+    Selected history s principal extra ↔ assess history s = .resolved principal extra := by
+  cases history with
+  | none => simp [Selected, assess]
+  | some m =>
+    cases hu : m.uniqueIds <;> simp [Selected, assess, hu]
+    cases hf : m.find s.principal <;> simp
+    rename_i main
+    have hm (e : Performance) :
+        albuminMethodRule.holds () e.item ↔ e.item.methodAllowed = some true :=
+      methodAllowed_iff _
+    simp only [hm, Id.run, pure]
+    cases hp : main.item.methodAllowed with
+    | none => grind
+    | some allowed =>
+      cases allowed
+      · grind
+      · cases he : s.additional
+        · simp
+          grind
+        · rename_i id
+          by_cases hd : s.principal = id
+          · simp [hd]
+          · cases hx : m.find id
+            · simp [hd, hx]
+            · rename_i e
+              simp [hd, hx]
+              cases extra with
+              | none => split <;> simp_all
+              | some extra =>
+                simp only [additional_iff]
+                split <;> simp_all <;> grind
+
 /-- 上限でなく、実施IDと主たる検査を固定した算定案の点数の射影。 -/
 def pointsRule : Rule (Option Month × Selection) Nat :=
   ⟨"D005.D007-glycemic-points",
     ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "2026-10-22取得版",
       "PDF176頁 D005の9及び180頁 D007の17・21", .checkedAgainstSource,
       some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,
-    fun (m, s) p => (assess m s).points = some p⟩
+    fun (m, s) p => ∃ principal extra, Selected m s principal extra ∧
+      p = principal.item.points + (extra.map (·.item.points)).getD 0⟩
+
+theorem pointsRule_iff (m : Option Month) (s : Selection) (p : Nat) :
+    pointsRule.holds (m, s) p ↔ (assess m s).points = some p := by
+  change (∃ principal extra, Selected m s principal extra ∧ _) ↔ _
+  simp only [selected_iff]
+  cases assess m s <;> simp [Assessment.points, eq_comm, and_assoc]
 
 theorem determines_selected_points (m : Option Month) (s : Selection) (p : Nat)
     (h : (assess m s).points = some p) : DeterminesAt [pointsRule] (m, s) := by
   refine ⟨⟨p, ?_⟩, ?_⟩
-  · exact (satisfies_cons _ _ _ _).2 ⟨h, satisfies_nil _ _⟩
+  · exact (satisfies_cons _ _ _ _).2 ⟨(pointsRule_iff m s p).mpr h, satisfies_nil _ _⟩
   · intro a b ha hb
-    have first := ha pointsRule (by simp)
-    have second := hb pointsRule (by simp)
+    have first := (pointsRule_iff m s a).mp (ha pointsRule (by simp))
+    have second := (pointsRule_iff m s b).mp (hb pointsRule (by simp))
     exact Option.some.inj (first.symm.trans second)
+
+theorem determines_selected_points_on :
+    DeterminesOn (fun (m, s) => ∃ main extra, Selected m s main extra) [pointsRule] := by
+  rintro ⟨m, s⟩ ⟨main, extra, h⟩
+  exact determines_selected_points m s
+    (main.item.points + (extra.map (·.item.points)).getD 0)
+    (by simp [(selected_iff m s main extra).mp h, Assessment.points])
 
 private def monthWith (exception : Exception) : Month :=
   ⟨[⟨1, .a1c⟩, ⟨2, .glycatedAlbumin (some .enzymatic)⟩, ⟨3, .anhydroglucitol⟩], some exception⟩
