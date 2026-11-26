@@ -10,6 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unicodedata
 
+from .fee_clauses import index_clauses
 from .draft_fee import DEFAULT_PDF, DOCUMENT, EDITION, LOCAL, SHA256, URL, verified_pages
 
 
@@ -41,6 +42,15 @@ def build_inventory(pages: list[str]) -> dict:
     noncode_rows: list[dict] = []
     rows: list[dict] = []
 
+    current = None
+    clause_lines = []
+
+    def close():
+        nonlocal current, clause_lines
+        if current is not None:
+            current.update(index_clauses(clause_lines))
+        current, clause_lines = None, []
+
     for page, content in enumerate(pages, 1):
         if not content.strip():
             raise ValueError(f"PDF {page}頁の文字が空です")
@@ -51,6 +61,7 @@ def build_inventory(pages: list[str]) -> dict:
             trimmed = text.strip()
             division = DIVISION.fullmatch(trimmed)
             if division:
+                close()
                 key = " ".join(trimmed.split())
                 # 登録版では目次の次（同じ物理頁）で第1章の見出しが再登場する。
                 if not in_body and toc and key == toc[0]:
@@ -68,28 +79,37 @@ def build_inventory(pages: list[str]) -> dict:
                                  "heading": raw.strip(), "level": level})
             elif in_body:
                 anchor = {**scope, "page": page, "line": line, "heading": raw.strip()}
+                if trimmed in {"通則", "区分"}:
+                    close()
                 if trimmed == "通則":
                     general_rules.append({**anchor, "heading": previous})
                 elif (group := DELETION.fullmatch(text)):
+                    close()
                     rows.append({**anchor, "code": group[1], "status": "deleted_group",
                                  "first_code": group[2], "last_code": group[3] or group[4]})
                 elif (entry := SINGLE.fullmatch(text)):
+                    close()
                     rows.append({**anchor, "code": entry[1],
                                  "status": "deleted" if entry[2] == "削除" else "listed"})
+                    if rows[-1]["status"] == "listed":
+                        current = rows[-1]
                 elif (re.match(r"^[A-Z][0-9]{3}", text)
                       or SINGLE.fullmatch(trimmed) or DELETION.fullmatch(trimmed)):
                     raise ValueError(f"PDF {page}頁 {line}行の番号見出しは要確認です")
                 elif scope["chapter"] in (3, 4) and (item := re.match(r"^([0-9]+)\s+\S", text)):
                     noncode_rows.append({**anchor, "number": int(item[1]), "kind": "numbered_item"})
+                elif current is not None:
+                    clause_lines.append((page, line, raw))
             previous = raw.strip()
+    close()
     if not toc or not in_body or toc != body_divisions:
         raise ValueError("目次と本文の章・部・節・款の見出し列が一致しません")
     return {"rows": rows, "noncode_rows": noncode_rows, "divisions": sections,
             "general_rules": general_rules}
 
 
-def write_local(report: dict, local: Path = LOCAL) -> Path:
-    target = local / "inventory" / "fee-index.json"
+def write_local(report: dict, local: Path = LOCAL, *, name: str = "fee-index.json") -> Path:
+    target = local / "inventory" / name
     if target.resolve() != target:
         raise ValueError("出力先にシンボリックリンクがあります")
     target.parent.mkdir(parents=True, exist_ok=True)

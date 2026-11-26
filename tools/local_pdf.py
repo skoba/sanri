@@ -7,6 +7,7 @@ Text order, ruby and table layout still need comparison with the source PDF.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import shutil
@@ -51,3 +52,9 @@ def extract_pages(pdf: Path) -> list[str]:
     if not any(page.strip() for page in pages):
         raise ValueError("PDFから本文を抽出できません。テキスト層のある原本を指定してください。")
     return pages
+
+
+def verified_pdf_pages(pdf: Path, sha256: str) -> list[str]:
+    if hashlib.sha256(pdf.read_bytes()).hexdigest() != sha256:
+        raise ValueError("PDFのSHA-256が登録版と異なります。対象版と取得元を確認してください。")
+    return extract_pages(pdf)

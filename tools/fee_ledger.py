@@ -37,6 +37,7 @@ def clause_coverage(index: dict, rules: list[dict]) -> dict:
             if path[0] in {"primary", "notice"} and path[1][0].isupper():
                 represented[path[1]][path[0]].add("/".join(path[2:]))
     rows = []
+    by_part = defaultdict(Counter)
     for heading in index["rows"]:
         if heading["status"] != "listed":
             continue
@@ -46,10 +47,14 @@ def clause_coverage(index: dict, rules: list[dict]) -> dict:
                   "reference": "未着手", "new": "未着手"}[coverage.status]
         paths = represented.get(code, {}) if (chapter, code) in modules else {}
         modeled = sorted(paths.get("primary", ()))
-        # 現行の見出し索引には項・注の一覧がない。将来の列は完全列挙時だけ付ける。
+        # 項・注の抽出に疑義が残る区分では分母を設定しない。
         indexed = heading.get("item_note_paths")
+        counts = by_part[(chapter, heading.get("part"))]
+        counts["total"] += 1
+        counts["indexed"] += indexed is not None
         rows.append({
             "chapter": chapter, "division": code, "status": status, "module": coverage.module,
+            "item_note_issues": heading.get("clause_issues", []),
             "primary_paths": modeled, "notice_paths": sorted(paths.get("notice", ())),
             "item_note_total": None if indexed is None else len(set(indexed)),
             "item_note_matched": None if indexed is None else len(set(indexed) & set(modeled)),
@@ -60,6 +65,8 @@ def clause_coverage(index: dict, rules: list[dict]) -> dict:
             path[0] for path in sorted(distinct_paths)
         )),
         "divisions_with_item_note_total": sum(row["item_note_total"] is not None for row in rows),
+        "item_note_totals_by_part": [{"chapter": chapter, "part": part, **counts}
+                                     for (chapter, part), counts in by_part.items()],
         "divisions": rows,
         "paths_without_division": ["/".join(path) for path in sorted(distinct_paths)
                                    if path[0] == "clarification" or not path[1][0].isupper()],

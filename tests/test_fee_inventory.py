@@ -55,6 +55,17 @@ class InventoryTests(unittest.TestCase):
             with self.subTest(ambiguous=ambiguous), self.assertRaisesRegex(ValueError, "番号見出し"):
                 build_inventory(["\n".join([FIRST, FIRST, ambiguous])])
 
+    def test_clause_columns_across_pages_and_numbering_uncertainty(self):
+        pages = ["\n".join([FIRST, FIRST, "Q900 合成区分",
+                           "        １   架空項", "             注   項の条件"]),
+                 "\n".join(["２   架空項", "注１   区分の条件", " ２   続きの注",
+                            "Q901 別の区分", "        １   架空項", "        ３   飛び番号"])]
+        first, second = build_inventory(pages)["rows"]
+        self.assertEqual(first["item_note_paths"], ["item/1", "item/2", "item/1/note", "note/1", "note/2"])
+        self.assertEqual(first["items"][1]["page"], 2)
+        self.assertIsNone(second["item_note_paths"])
+        self.assertEqual(second["clause_issues"][0]["kind"], "item_sequence")
+
     def test_local_report_can_be_regenerated(self):
         with TemporaryDirectory() as local:
             report = build_inventory(["\n".join([FIRST, FIRST, "Q900 合成"])])
