@@ -11,6 +11,7 @@ import Sanri.UrineFecalTests
 import Sanri.SpecimenRules
 import Sanri.SpecimenTestsChecks
 import Sanri.SpecimenJudgment
+import Sanri.BloodMorphology
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring

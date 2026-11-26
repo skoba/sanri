@@ -1,5 +1,5 @@
 import Sanri.Logic
-import Sanri.SpecimenJudgment
+import Sanri.BloodMorphology
 import Sanri.SpecimenCollection
 import Sanri.UrineFecalTests
 import Sanri.Cardiorespiratory
@@ -8,15 +8,12 @@ namespace Sanri.CaseStudies.OutpatientBloodTests
 
 open Sanri.Logic
 open Sanri.MedicalFee
+open BloodMorphology (BloodCountItem bloodCountPoints)
 
 /-! 一患者・一保険医療機関・一外来日の血液検査本体と静脈採血を扱う。
 成人の通常外来で、他の包括・加算・委託が関わらない場合を対象とする。
 血算は一検体、D007は下記の八種類に限り、同一採血での同一検査の反復は対象外。
 採血識別子は採取行為を表し、採血管・検体容器を表さない。 -/
-
-inductive BloodCountItem where
-  | redCells | whiteCells | hemoglobin | hematocrit | platelets
-  deriving DecidableEq, Repr
 
 inductive ChemistryItem where
   | bun | creatinine | ast | alt | totalProtein | albumin | gammaGT | uricAcid
@@ -66,13 +63,10 @@ def chemistryPoints (items : List Measurement) : Nat :=
   (draws.map fun draw =>
     chemistryDrawPoints ((items.filter (fun m => m.draw == draw)).map Measurement.item)).sum
 
-def bloodCountPoints (items : List BloodCountItem) : Nat :=
-  if items.isEmpty then 0 else 21
-
 def judgmentPoints (count : List BloodCountItem) (chemistry : List Measurement)
     (earlier : List SpecimenJudgment.Category) : Option Nat :=
   let countTests : List SpecimenJudgment.Test :=
-    if count.isEmpty then [] else [{ major := 5, number := 5, ordinaryCategory := .hematological }]
+    if count.isEmpty then [] else [BloodMorphology.Item.completeBloodCount.judgmentTest false]
   let chemistryTests : List SpecimenJudgment.Test :=
     chemistry.map fun m => { major := 7, number := m.item.number, ordinaryCategory := .biochemicalI }
   -- 初回検査日の条件を満たさない区分を既存の月内除外に渡す。
