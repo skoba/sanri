@@ -12,6 +12,7 @@ import Sanri.SpecimenRules
 import Sanri.SpecimenTestsChecks
 import Sanri.SpecimenJudgment
 import Sanri.BloodMorphology
+import Sanri.BloodChemistry
 import Sanri.GlycemicTests
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory

@@ -1,5 +1,6 @@
 import Sanri.Logic
 import Sanri.BloodMorphology
+import Sanri.BloodChemistry
 import Sanri.SpecimenCollection
 import Sanri.UrineFecalTests
 import Sanri.Cardiorespiratory
@@ -36,32 +37,32 @@ structure Context where
   /-- 回路採血や手術時採血等の除外は、採血の事実から既存モデルで評価する。 -/
   collection : SpecimenCollection.Context
 
-def ChemistryItem.number : ChemistryItem → Nat
-  | .ast | .alt => 3
-  | _ => 1
+def ChemistryItem.toBloodChemistry : ChemistryItem → BloodChemistry.Item
+  | .bun => .bun
+  | .creatinine => .creatinine
+  | .ast => .ast
+  | .alt => .alt
+  | .totalProtein => .totalProtein
+  | .albumin => .albumin
+  | .gammaGT => .gammaGT
+  | .uricAcid => .uricAcid
 
-def ChemistryItem.points (item : ChemistryItem) : Nat :=
-  if item.number = 3 then 17 else 11
+def ChemistryItem.number (i : ChemistryItem) : Nat := i.toBloodChemistry.number
 
-def eligible (c : Context) : ChemistryItem → Option Bool
-  | .albumin => c.albuminByModifiedBCP
-  | .creatinine => c.creatinineByJaffe.map (! ·)
-  | _ => some true
+def eligible (c : Context) (i : ChemistryItem) : Option Bool :=
+  BloodChemistry.Draw.eligible
+    { performed := [], albuminByModifiedBCP := c.albuminByModifiedBCP,
+      creatinineByJaffe := c.creatinineByJaffe } i.toBloodChemistry
 
 def chemistryItems (c : Context) : Option (List Measurement) := do
   if c.chemistry.eraseDups != c.chemistry then none else
     c.chemistry.filterM (fun m => eligible c m.item)
 
-/-- D007注イ・ロのうち、対象の八種類で到達する範囲。 -/
-def chemistryDrawPoints (items : List ChemistryItem) : Nat :=
-  if 8 ≤ items.length then 99
-  else if 5 ≤ items.length then 93
-  else (items.map ChemistryItem.points).sum
-
 def chemistryPoints (items : List Measurement) : Nat :=
   let draws := (items.map Measurement.draw).eraseDups
   (draws.map fun draw =>
-    chemistryDrawPoints ((items.filter (fun m => m.draw == draw)).map Measurement.item)).sum
+    BloodChemistry.pointsForItems
+      ((items.filter (fun m => m.draw == draw)).map (·.item.toBloodChemistry))).sum
 
 def judgmentPoints (count : List BloodCountItem) (chemistry : List Measurement)
     (earlier : List SpecimenJudgment.Category) : Option Nat :=
