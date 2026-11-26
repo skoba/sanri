@@ -75,6 +75,7 @@ python3 -m tools.draft_fee A000 D007
 同じ登録版の本文PDFを使い、リポジトリのルートで実行します。
 
 ```sh
+lake build
 python3 -m tools.fee_inventory
 python3 -m tools.fee_backlog
 ```
@@ -103,6 +104,24 @@ python3 -m tools.procedure_master --as-of 2026-10-22
 - `inventory/master-coverage.json`：基準日に未適用の行、この版で異動のあった行、本文の区分見出しと区分欄の突合せ。突合せには先に `python3 -m tools.fee_inventory` を実行しておきます。
 
 列の意味と読み方の注意は[参照スキーマ](../docs/tensuhyo-schema.md#医科診療行為マスター)にまとめています。区分欄が一致しても、項・注との対応や点数の一致までは確認していません。
+
+## 条項台帳と点数照合を再生成する
+
+公開Leanモデルの条項IDと出典、D005・D007・`SpecimenCatalog` の項目・項番・点数を出力します。Lean環境の定義を列挙し、規則リストの無名要素と有限の列挙型ごとの規則を含めます。出典を引数で受け取る補助定義は、確定した出典がない行として記録します。生成物は作業ツリーに登録せず、出力コマンドを公開します。出力はLeanのメタプログラムで値を評価して作り、モデルの定理や通常ビルドはこの評価に依存しません。
+
+```sh
+lake build
+lake env lean tools/FeeLedger.lean > /tmp/sanri-lean-ledger.json
+```
+
+上のJSONは公開モデル由来です。ローカル資料との照合は、`fee-index.json` と `master-index.tsv`（版・基準日の記録は `master-coverage.json`）を同じディレクトリに配置して実行します。既存索引を再生成する場合は前節までの手順を使います。
+
+```sh
+python3 -m tools.fee_ledger
+git check-ignore tensuhyo/inventory/clause-ledger.json
+```
+
+照合レポートはGit管理外の `tensuhyo/inventory/clause-ledger.json` にのみ保存します。区分別の状態、出典種別別の参照パス数、未分類一覧、区分・項番別の点数集合の一致・不一致と片側のみの行を含みます。本文の項・注の分母を取得できない区分は `null` で示します。点数比較では準用行を集計から分け、注加算を別種別として照合します。マスターの項番だけでは検査種類・枝・9桁コードを一意に対応付けられないため、一致は比較キーごとの点数集合に限ります。[条項IDの書式](../docs/tensuhyo-schema.md#公開leanモデルの条項id)
 
 ## 残尿測定の限定的なCSV照合
 

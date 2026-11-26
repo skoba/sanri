@@ -5,13 +5,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from .draft_fee import DEFAULT_PDF, LOCAL, verified_pages
-from .fee_coverage import coverage_for
+from .fee_coverage import coverage_for, source_modules
+from .fee_ledger import load_lean
 from .fee_inventory import build_inventory
 
 
 COLUMNS = ("章", "部", "節", "款", "種別", "識別子", "見出し（抽出行）", "PDF頁", "抽出行",
            "既存実装との対応", "主なLeanモジュール", "着手工程", "残作業")
-STATUS = {"model": "個別モデルあり", "reference": "参照のみ", "new": "新規"}
+STATUS = {"source": "出典付き制約あり", "model": "個別モデルあり", "reference": "参照のみ", "new": "新規"}
 OUTPATIENT_CASE = {"A000", "D000", "D005", "D007", "D026", "D208", "D400", "F400"}
 INPATIENT_BUNDLES = {"D025", "D027", "E004"}
 
@@ -29,8 +30,9 @@ def work_stage(chapter: int, part: int | None, code: str = "") -> str:
     raise ValueError(f"工程未割当 第{chapter}章 第{part}部 {code}")
 
 
-def backlog_rows(inventory: dict) -> list[tuple]:
+def backlog_rows(inventory: dict, rules: list[dict] | None = None) -> list[tuple]:
     rows = []
+    modules = source_modules(rules or [])
 
     def append(row, kind, key, status, module, stage, task):
         rows.append((row["chapter"], row["part"], row["section"], row["subsection"],
@@ -44,7 +46,7 @@ def backlog_rows(inventory: dict) -> list[tuple]:
             append(row, kind, code, "削除表記", "", "1 版・条項確認",
                    "旧版・経過措置から参照される場合に、対象時点の規定を確認する。")
         elif row["status"] == "listed":
-            coverage = coverage_for(code, row["chapter"])
+            coverage = coverage_for(code, row["chapter"], modules)
             append(row, "区分", code, STATUS[coverage.status], coverage.module,
                    work_stage(row["chapter"], row["part"], code), coverage.remaining)
         else:
@@ -73,7 +75,7 @@ def backlog_rows(inventory: dict) -> list[tuple]:
 
 def main() -> None:
     inventory = build_inventory(verified_pages(DEFAULT_PDF))
-    rows = backlog_rows(inventory)
+    rows = backlog_rows(inventory, load_lean()["rules"])
     folder = LOCAL / "inventory"
     if folder.resolve() != folder:
         raise ValueError("保存先は tensuhyo/inventory 内に限ります。")

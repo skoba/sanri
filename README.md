@@ -4,7 +4,7 @@
 
 規則間の矛盾、本文だけでは決まらない条件、電子表の表現範囲、形式化の誤りを区別して記録します。レセコンの開発は目的に含めません。[設計文書](./DESIGN.md)、[公式資料台帳](./docs/source-register.md)、[検証状況](./docs/validation-status.md)に、研究課題・出典・到達点をまとめています。
 
-令和8年度改定を起点に、外来・在宅から出来高入院、DPC/PDPS、食事・生活療養までを計画しています。全2,401区分の既存Leanとの対応と着手順を、枝番号単位の一覧として再生成できます。公費は機構の解説に掲載された19の法別番号を対象とします。[全体の研究計画](./docs/roadmap.md)・[区分別の残作業と一覧の生成手順](./docs/implementation-backlog.md)・[公費19番号の形式化計画](./docs/public-funding-plan.md)
+令和8年度改定を起点に、外来・在宅から出来高入院、DPC/PDPS、食事・生活療養までを計画しています。番号付き各区分の既存Leanとの対応と着手順を、枝番号単位の一覧として再生成できます。公費は機構の解説に掲載された19の法別番号を対象とします。[全体の研究計画](./docs/roadmap.md)・[区分別の残作業と一覧の生成手順](./docs/implementation-backlog.md)・[公費19番号の形式化計画](./docs/public-funding-plan.md)
 
 ## ビルドと検証
 
@@ -33,7 +33,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 - [残尿測定の事例](./Sanri/CaseStudies/ResidualUrine.lean)：患者合計の月上限と、コード別上限・同日背反の表現差を証明します。公式マスター全体の誤りを証明したものではありません。
 - [届出の疑義解釈の事例](./Sanri/CaseStudies/FilingClarification.lean)：令和8年疑義解釈その1・医科問3を、届出の種類に限定して形式化します。加算全体の算定可否は対象外です。
 - [ローカルCSV照合](./tools/audit_residual_urine.py)：版・ハッシュ・出典行を確認して限定した履歴を照合し、結果をGit管理外へ保存します。使い方は [tensuhyo/README.md](./tensuhyo/README.md) を参照してください。
-- [診療行為マスターの取込](./tools/procedure_master.py)：登録版のハッシュと列を検査し、9桁の診療行為コードを区分・項番で索引化します。本文の区分見出しとの突合せまでを行い、点数や算定条件の一致は別に照合します。
+- [診療行為マスターの取込](./tools/procedure_master.py)：登録版のハッシュと列を検査し、9桁の診療行為コードを区分・項番で索引化します。本文の区分見出しとの突合せを行います。
+- [条項台帳の生成と点数照合](./tensuhyo/README.md#条項台帳と点数照合を再生成する)では、公開モデルから出典付き制約と点数表を出力し、ローカル索引と突き合わせます。
 
 ## 実装範囲
 

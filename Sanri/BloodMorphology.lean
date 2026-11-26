@@ -141,16 +141,16 @@ private def notice (location : String) : SourceRef :=
     location, .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
 
 def baseRule : Rule Context (Nat × Nat) :=
-  ⟨"D005.base", primary "PDF175–176頁 D005の1〜15",
+  ⟨"primary/D005/item/1..15", primary "PDF175–176頁 D005の1〜15",
     fun c r => r.1 = c.item.basePoints⟩
 
 def microscopicStainRule : Rule Context Nat :=
-  ⟨"D005.6-stain", primary "PDF176頁 D005の6の注", fun c p =>
+  ⟨"primary/D005/item/6/note", primary "PDF176頁 D005の6の注", fun c p =>
     c.item = .microscopicDifferential → ∃ stains, c.stains = some stains ∧
       p = Item.microscopicDifferential.stainRate * stains.eraseDups.length⟩
 
 def marrowStainRule : Rule Context Nat :=
-  ⟨"D005.14-stain", primary "PDF176頁 D005の14の注", fun c p =>
+  ⟨"primary/D005/item/14/note", primary "PDF176頁 D005の14の注", fun c p =>
       c.item = .boneMarrowPicture → ∃ stains, c.stains = some stains ∧
       p = Item.boneMarrowPicture.stainRate * stains.eraseDups.length⟩
 
@@ -172,13 +172,13 @@ theorem stainPoints_iff (c : Context) (p : Nat) :
 
 /-- モデルで確認する通知の個別要件。ESRの院内要件も保持する。 -/
 def esrPerformanceRule : Rule Context Unit :=
-  ⟨"D005(1)-esrPerformance", notice "PDF338頁 D005(1)", fun c _ =>
+  ⟨"notice/D005/paragraph/1", notice "PDF338頁 D005(1)", fun c _ =>
     c.item = .esr → c.esrInHouse = some true ∧
       (c.esrContracted = some false ∨
         c.esrContracted = some true ∧ c.esrPromptReport = some true)⟩
 
 def cellClassRule : Rule Context Unit :=
-  ⟨"D005(2)-cellClass", notice "PDF338頁 D005(2)", fun c _ =>
+  ⟨"notice/D005/paragraph/2", notice "PDF338頁 D005(2)", fun c _ =>
     c.item = .automatedDifferential ∨ c.item = .microscopicDifferential ∨
     c.item = .boneMarrowPicture →
       ∃ classes, c.cellClasses = some classes ∧
@@ -186,32 +186,32 @@ def cellClassRule : Rule Context Unit :=
           List CellClass), k ∈ classes⟩
 
 def bloodCountRule : Rule Context Unit :=
-  ⟨"D005(4)-bloodCount", notice "PDF338頁 D005(4)", fun c _ =>
+  ⟨"notice/D005/paragraph/4", notice "PDF338頁 D005(4)", fun c _ =>
     c.item = .completeBloodCount → ∃ counts, c.counts = some counts ∧ counts ≠ []⟩
 
 def malariaMethodRule : Rule Context Unit :=
-  ⟨"D005(7)-malariaMethod", notice "PDF338頁 D005(7)", fun c _ =>
+  ⟨"notice/D005/paragraph/7", notice "PDF338頁 D005(7)", fun c _ =>
     c.item = .dnaContainingRedCellCount → c.meetsMalariaTestRequirements = some true⟩
 
 def resistanceMethodRule : Rule Context Unit :=
-  ⟨"D005(8)-resistanceMethod", notice "PDF338頁 D005(8)", fun c _ =>
+  ⟨"notice/D005/paragraph/8", notice "PDF338頁 D005(8)", fun c _ =>
     c.item = .redCellResistance →
       ∃ method, c.resistanceMethod = some method ∧ method ≠ .other⟩
 
 def a1cMonthlyRule : Rule Context Unit :=
-  ⟨"D005(9)-a1cMonthly", notice "PDF339頁 D005(9)", fun c _ =>
+  ⟨"notice/D005/paragraph/9", notice "PDF339頁 D005(9)", fun c _ =>
     c.item = .hemoglobinA1c → c.a1cMonthlyAllowance = some true⟩
 
 def thymidineKinaseRule : Rule Context Unit :=
-  ⟨"D005(10)-thymidineKinase", notice "PDF339頁 D005(10)", fun c _ =>
+  ⟨"notice/D005/paragraph/10", notice "PDF339頁 D005(10)", fun c _ =>
     c.item = .thymidineKinaseActivity → c.meetsDiseaseAndPurpose = some true⟩
 
 def terminalTransferaseRule : Rule Context Unit :=
-  ⟨"D005(11)-terminalTransferase", notice "PDF339頁 D005(11)", fun c _ =>
+  ⟨"notice/D005/paragraph/11", notice "PDF339頁 D005(11)", fun c _ =>
     c.item = .terminalDeoxynucleotidylTransferase → c.meetsDiseaseAndPurpose = some true⟩
 
 def tumorAntigenRule : Rule Context Unit :=
-  ⟨"D005(12)-tumorAntigen", notice "PDF339頁 D005(12)", fun c _ =>
+  ⟨"notice/D005/paragraph/12", notice "PDF339頁 D005(12)", fun c _ =>
     c.item = .tumorCellAntigens → c.meetsTumorAntigenRequirements = some true⟩
 
 def eligibilityRules : List (Rule Context Unit) :=
@@ -236,15 +236,15 @@ theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true
       simp_all <;> rename_i a b <;> cases a <;> cases b <;> simp_all
 
 def stainRule : Rule Context (Nat × Nat) :=
-  ⟨"D005.stains", primary "PDF176頁 D005の6・14の注",
+  ⟨"primary/D005/item/6/note+primary/D005/item/14/note", primary "PDF176頁 D005の6・14の注",
     fun c r => StainPoints c r.2⟩
 
 def esrLocationRule : Rule Context (Nat × Nat) :=
-  ⟨"D005.1-note", primary "PDF175頁 D005の1の注",
+  ⟨"primary/D005/item/1/note", primary "PDF175頁 D005の1の注",
     fun c _ => c.item = .esr → c.esrInHouse = some true⟩
 
 def eligibilityRule : Rule Context (Nat × Nat) :=
-  ⟨"D005.eligibility", notice "PDF338–339頁 D005(1)・(2)・(4)・(6)〜(12)",
+  ⟨"unclassified/d005-eligibility-composite", notice "PDF338–339頁 D005(1)・(2)・(4)・(6)〜(12)",
     fun c _ => Eligibility c⟩
 
 def individualRules := [baseRule, stainRule, eligibilityRule, esrLocationRule]
@@ -312,11 +312,11 @@ def PairContext.principalOnly (c : PairContext) (charged : List Item) : Prop :=
   ∃ item, c.principal = some item ∧ (item = c.first ∨ item = c.second) ∧ charged = [item]
 
 def eosinophilRule : Rule PairContext (List Item) :=
-  ⟨"D005.3-notice", notice "PDF338頁 D005(3)",
+  ⟨"notice/D005/paragraph/3", notice "PDF338頁 D005(3)",
     fun c charged => c.categoryConflict = true → c.principalOnly charged⟩
 
 def malariaRule : Rule PairContext (List Item) :=
-  ⟨"D005.7-notice", notice "PDF338頁 D005(7)",
+  ⟨"notice/D005/paragraph/7", notice "PDF338頁 D005(7)",
     fun c charged => c.malariaConflict = true → c.principalOnly charged⟩
 
 def Item.outpatientService (item : Item) : OutpatientConsultation.Service :=

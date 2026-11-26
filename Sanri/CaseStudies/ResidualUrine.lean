@@ -45,17 +45,17 @@ def NoMixedMethodsOnSameDay (claims : MonthlyClaims) : Prop :=
   claims.Pairwise (fun first second => first.day ≠ second.day ∨ first.method = second.method)
 
 def patientLimitRule (source : SourceRef) (limit : Nat) : Rule Unit MonthlyClaims where
-  id := "residual-urine.patient-monthly-limit"
+  id := "unclassified/residual-urine-patient-monthly-limit"
   source := source
   holds := fun _ claims => PatientMonthlyLimit limit claims
 
 def codeLimitsRule (source : SourceRef) (limit : Nat) : Rule Unit MonthlyClaims where
-  id := "residual-urine.code-monthly-limits-projection"
+  id := "unclassified/residual-urine-code-monthly-limits-projection"
   source := source
   holds := fun _ claims => CodeMonthlyLimits limit claims
 
 def sameDayRule (source : SourceRef) : Rule Unit MonthlyClaims where
-  id := "residual-urine.same-day-principal-method"
+  id := "unclassified/residual-urine-same-day-principal-method"
   source := source
   holds := fun _ claims => NoMixedMethodsOnSameDay claims
 

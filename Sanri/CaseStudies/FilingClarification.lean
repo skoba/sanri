@@ -60,7 +60,7 @@ def notYetReviewed : List (Rule Context FilingRequirement) := []
 
 /-- 問3の範囲に限り、別途の届出が必要という回答を制約として追加する。 -/
 def clarificationRule : Rule Context FilingRequirement where
-  id := "electronic-information.new-filing-required.2026-Q3"
+  id := "clarification/r08-20260323-01-medical/question/3"
   source := clarificationSource
   holds := fun context requirement =>
     InScope context → requirement = .separateFilingRequired

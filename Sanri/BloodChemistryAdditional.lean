@@ -97,7 +97,7 @@ private def notice (location : String) : SourceRef :=
     .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
 
 def pointsRule : Rule Context Nat :=
-  ⟨"D007.25-34-and-SP-D",
+  ⟨"primary/D007/item/25..34+primary/D007/item/38",
     ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "2026-10-22取得版",
       "PDF180頁 D007の25〜34及び38のSP-D", .checkedAgainstSource,
       some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,
@@ -136,37 +136,37 @@ private theorem vitaminD_iff (c : Context) :
         simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm, hi, requires_iff]
 
 def lipoproteinIntervalRule : Rule Context Unit :=
-  ⟨"D007(19)-lipoproteinInterval", notice "PDF357頁 D007(19)", fun c _ =>
+  ⟨"notice/D007/paragraph/19", notice "PDF357頁 D007(19)", fun c _ =>
     c.item = .lipoproteinA → c.threeMonthLimitAllows = some true⟩
 
 def heparinWindowRule : Rule Context Unit :=
-  ⟨"D007(20)-heparinWindow", notice "PDF357頁 D007(20)", fun c _ =>
+  ⟨"notice/D007/paragraph/20", notice "PDF357頁 D007(20)", fun c _ =>
     c.item = .heparin → c.heparinFirstInWindow = some true⟩
 
 def lungMarkerMethodsRule : Rule Context Unit :=
-  ⟨"D007(21)-lungMarkerMethods", notice "PDF357頁 D007(21)", fun c _ =>
+  ⟨"notice/D007/paragraph/21", notice "PDF357頁 D007(21)", fun c _ =>
     (c.item = .kl6 → MethodIn c.method [.eia, .eclia, .latexAgglutinationTurbidimetry]) ∧
       (c.item = .surfactantProteinA → c.method = some .eia) ∧
       (c.item = .surfactantProteinD → MethodIn c.method [.eia, .latexImmunoturbidimetry])⟩
 
 def cystatinMethodAndIntervalRule : Rule Context Unit :=
-  ⟨"D007(23)ア-cystatinMethodAndInterval", notice "PDF357頁 D007(23)ア", fun c _ =>
+  ⟨"notice/D007/paragraph/23/a", notice "PDF357頁 D007(23)ア", fun c _ =>
     c.item = .cystatinC →
     MethodIn c.method [.eia, .latexAgglutinationTurbidimetry, .colloidalGoldAgglutination,
       .nephelometry] ∧ c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
       c.threeMonthLimitAllows = some true⟩
 
 def vitaminDRule : Rule Context Unit :=
-  ⟨"D007(24)-vitaminD", notice "PDF357頁 D007(24)", fun c _ =>
+  ⟨"notice/D007/paragraph/24", notice "PDF357頁 D007(24)", fun c _ =>
     c.item = .vitaminD25 → VitaminDRequirements c⟩
 
 def pentosidineRule : Rule Context Unit :=
-  ⟨"D007(25)-pentosidine", notice "PDF357頁 D007(25)", fun c _ =>
+  ⟨"notice/D007/paragraph/25", notice "PDF357頁 D007(25)", fun c _ =>
     c.item = .pentosidine → c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
     c.dueToDiabeticNephropathy = some false ∧ c.threeMonthLimitAllows = some true⟩
 
 def inulinRule : Rule Context Unit :=
-  ⟨"D007(26)-inulin", notice "PDF357頁 D007(26)", fun c _ =>
+  ⟨"notice/D007/paragraph/26", notice "PDF357頁 D007(26)", fun c _ =>
     c.item = .inulin → c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
     c.sixMonthLimitAllows = some true⟩
 
@@ -185,7 +185,7 @@ theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true
     cystatinMethodAndIntervalRule, vitaminDRule, pentosidineRule, inulinRule, eligible, hi, methodIn_iff, vitaminD_iff, requires_iff]
 
 def eligibilityRule : Rule Context Nat :=
-  ⟨"D007.19-26-notice", notice "PDF357頁 D007(19)〜(21)・(23)〜(26)の個別条件",
+  ⟨"unclassified/d007-additional-eligibility-composite", notice "PDF357頁 D007(19)〜(21)・(23)〜(26)の個別条件",
     fun c _ => Eligibility c⟩
 
 def individualRules := [pointsRule, eligibilityRule]
@@ -228,8 +228,8 @@ def Group.restricts (group : Group) (performed : List Item) : Bool :=
 
 def Group.rule (group : Group) : Rule (List Item) (List Item) :=
   let (id, location) := match group with
-    | .lungMarkers => ("D007.21-notice", "PDF357頁 D007(21)")
-    | .monthlyTroponins => ("D007.22-notice", "PDF357頁 D007(22)")
+    | .lungMarkers => ("notice/D007/paragraph/21", "PDF357頁 D007(21)")
+    | .monthlyTroponins => ("notice/D007/paragraph/22", "PDF357頁 D007(22)")
   ⟨id, notice location, fun performed selected =>
     group.restricts performed = true →
       ∃ item, item ∈ performed ∧ item ∈ group.items ∧ selected = [item]⟩

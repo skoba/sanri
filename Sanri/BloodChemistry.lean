@@ -141,19 +141,19 @@ private def methodsSource : SourceRef :=
     some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩
 
 def albuminRule : Rule Draw Item :=
-  ⟨"D007.1-albumin-method", methodsSource,
+  ⟨"primary/D007/item/1", methodsSource,
     fun c item => item = .albumin → c.albuminByModifiedBCP = some true⟩
 
 def creatinineRule : Rule Draw Item :=
-  ⟨"D007.4", notice "PDF356頁 D007(4)",
+  ⟨"notice/D007/paragraph/4", notice "PDF356頁 D007(4)",
     fun c item => item = .creatinine → c.creatinineByJaffe = some false⟩
 
 def ketoneGlucoseChlorideRule : Rule Draw Item :=
-  ⟨"D007.1-ketone-glucose-chloride-method", methodsSource, fun c item =>
+  ⟨"primary/D007/item/1", methodsSource, fun c item =>
     item = .bloodKetoneGlucoseChloride → c.ketoneGlucoseChlorideMethodAllowed = some true⟩
 
 def manganeseRule : Rule Draw Item :=
-  ⟨"D007.8", notice "PDF356頁 D007(8)", fun c item =>
+  ⟨"notice/D007/paragraph/8", notice "PDF356頁 D007(8)", fun c item =>
     item = .manganese → ∃ details, c.manganese = some details ∧ details.Requirements⟩
 
 def eligibilityRules := [albuminRule, creatinineRule, ketoneGlucoseChlorideRule, manganeseRule]
@@ -166,11 +166,11 @@ theorem eligible_iff (c : Draw) (item : Item) :
 
 /-- 組合せ選択後の一採血で、二組それぞれに算定対象があるかを表す。 -/
 def sodiumChlorideRule : Rule (List Item) (Bool × Bool) :=
-  ⟨"D007.1-notice", notice "PDF355頁 D007(1)", fun items presence =>
+  ⟨"notice/D007/paragraph/1", notice "PDF355頁 D007(1)", fun items presence =>
     presence.1 = true ↔ .sodium ∈ items ∨ .chloride ∈ items⟩
 
 def phosphorusPhosphateRule : Rule (List Item) (Bool × Bool) :=
-  ⟨"D007.6-notice", notice "PDF356頁 D007(6)", fun items presence =>
+  ⟨"notice/D007/paragraph/6", notice "PDF356頁 D007(6)", fun items presence =>
     presence.2 = true ↔ .inorganicPhosphorus ∈ items ∨ .phosphate ∈ items⟩
 
 def mergedItemRules := [sodiumChlorideRule, phosphorusPhosphateRule]
@@ -205,7 +205,7 @@ theorem determines_merged_items_on : DeterminesOn (fun _ => True) mergedItemRule
 
 /-- 算定対象に整理済みの項目から、出典本文の各点数帯を関係として表す。 -/
 def pointsRule : Rule (List Item) Nat :=
-  ⟨"D007.1-8-note",
+  ⟨"primary/D007/item/1..8+primary/D007/note/i+primary/D007/note/ro+primary/D007/note/ha",
    ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "2026-10-22取得版",
      "PDF179頁 D007の1〜8・181頁 D007注イ〜ハ", .checkedAgainstSource,
      some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,
@@ -241,10 +241,10 @@ private def pairedRule (id location : String) (group : List Item) (count : Nat) 
   ⟨id, notice location, fun eligibleItems charged =>
     group.all eligibleItems.contains = true → (charged.filter group.contains).length = count⟩
 
-def calciumRule := pairedRule "D007.2" "PDF355頁 D007(2)" calciumGroup 1
-def ironBindingRule := pairedRule "D007.3" "PDF355頁 D007(3)" ironBindingGroup 1
-def cholesterolRule := pairedRule "D007.5" "PDF356頁 D007(5)" cholesterolGroup 2
-def proteinRule := pairedRule "D007.7" "PDF356頁 D007(7)" proteinGroup 2
+def calciumRule := pairedRule "notice/D007/paragraph/2" "PDF355頁 D007(2)" calciumGroup 1
+def ironBindingRule := pairedRule "notice/D007/paragraph/3" "PDF355頁 D007(3)" ironBindingGroup 1
+def cholesterolRule := pairedRule "notice/D007/paragraph/5" "PDF356頁 D007(5)" cholesterolGroup 2
+def proteinRule := pairedRule "notice/D007/paragraph/7" "PDF356頁 D007(7)" proteinGroup 2
 
 /-- 結果を未確認とする場合と、個別要件の不成立が確定する場合を区別する。 -/
 private def Rejected (c : Draw) : Item → Prop

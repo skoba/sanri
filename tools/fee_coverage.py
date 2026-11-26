@@ -7,6 +7,8 @@ Reference entries record identified cross-references or externally priced inputs
 The authoritative inventory of active headings is supplied by the caller.
 """
 
+import re
+from collections import defaultdict
 from dataclasses import dataclass
 
 
@@ -63,10 +65,6 @@ _GROUPS = [
      "D006-11 D006-12 D006-13 D006-14 D006-15 D006-16 D006-17 D006-18 D006-19 D006-20 "
      "D006-22 D006-23 D006-24 D006-25 D006-26 D006-27 D006-28 D006-29 D006-30 D006-31",
      "D026の遺伝子判断料への振分けとは別に、実施料の項別算定を追加する"),
-    ("model", "BloodMorphology", "D005",
-     "全15項と個別条件を形式化済み。HbA1cはD007との共通モデルに接続済み。例外重複、複数実施の組合せ、医学的条件の外部入力を検証する"),
-    ("model", "BloodChemistry", "D007",
-     "1〜34・35の血液ガス分析・38のSP-Dを部分形式化済み。残る35以降の検査・通知、入院時初回加算、D001からの準用を接続する"),
     ("reference", "UrineFecalTests", "D008", "D001の準用先の実施料・各注を形式化する"),
     ("reference", "Examinations", "D025", "特定機能病院の入院検査で入力する基本実施料を形式化する"),
     ("reference", "SpecimenJudgment", "D027", "D026が参照する入院判断料の本体と加算を形式化する"),
@@ -105,6 +103,60 @@ def _index() -> dict[tuple[int, str], Coverage]:
 _INDEX = _index()
 
 
-def coverage_for(code: str, chapter: int) -> Coverage:
+def coverage_for(code: str, chapter: int,
+                 modules: dict[tuple[int, str], set[str]] | None = None) -> Coverage:
     """Look up an exact canonical heading in the specified chapter, including homonyms."""
-    return _INDEX.get((chapter, code), _NEW)
+    key = (chapter, code)
+    if modules and key in modules:
+        return Coverage("source", "・".join(sorted(modules[key])),
+                        "出典付き制約を項・注・通知の索引と照合し、未対応条項を確認する")
+    return _INDEX.get(key, _NEW)
+
+
+_KIND_PREFIX = {"primaryText": "primary", "notification": "notice", "clarification": "clarification"}
+
+
+def clause_paths(rule: dict) -> list[tuple[str, ...]]:
+    """構造化IDを正規化し、複合IDと項の範囲を展開する。"""
+    identifier = rule["id"]
+    if rule.get("classification") == "parameterized" or identifier.startswith("unclassified/"):
+        return []
+    expected = _KIND_PREFIX.get(rule.get("kind"))
+    result = []
+    for reference in identifier.split("+"):
+        parts = tuple(reference.split("/"))
+        if not expected or parts[0] != expected:
+            raise ValueError(f"出典種別と条項IDが対応しません: {identifier}")
+        division = r"[A-Z][0-9]{3}(?:-[0-9]+)*"
+        number = r"[1-9][0-9]*"
+        kana = r"[a-z]+"
+        patterns = {
+            "primary": (rf"{division}/(?:heading|item/{number}(?:/note(?:/{number})?)?|note/(?:{number}|{kana}))",
+                        rf"ch{number}-part{number}(?:-section{number})?(?:-subsection{number})?/general/{number}"),
+            "notice": (rf"{division}/paragraph/{number}(?:/{kana})?",),
+            "clarification": (rf"[a-z0-9-]+/question/{number}",),
+        }
+        tail = "/".join(parts[1:])
+        if parts[0] == "primary" and (match := re.fullmatch(
+            rf"({division})/item/({number})\.\.({number})", tail
+        )):
+            first, last = int(match[2]), int(match[3])
+            if first > last:
+                raise ValueError(f"条項IDの項範囲が逆順です: {reference}")
+            result.extend(("primary", match[1], "item", str(i)) for i in range(first, last + 1))
+        elif any(re.fullmatch(pattern, tail) for pattern in patterns[parts[0]]):
+            result.append(parts)
+        else:
+            raise ValueError(f"条項IDの形式が異なります: {reference}")
+    return result
+
+
+def source_modules(rules: list[dict]) -> dict[tuple[int, str], set[str]]:
+    result = defaultdict(set)
+    for rule in rules:
+        for kind, code, *_ in clause_paths(rule):
+            if kind in {"primary", "notice"} and code[0].isupper():
+                result[(1 if code.startswith("A") else 2, code)].add(
+                    rule["module"].replace(".", "/") + ".lean"
+                )
+    return dict(result)

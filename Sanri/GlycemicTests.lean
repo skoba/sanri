@@ -127,7 +127,7 @@ private def notice (location : String) : SourceRef :=
 
 /-- 追加枠を用いる場合の例外条件。重複例外の解釈はこの制約の対象範囲外。 -/
 def additionalRule : Rule Month (Option Performance) :=
-  ⟨"D005.9-additional", notice "PDF339頁 D005(9) ただし書及び末文", fun month extra =>
+  ⟨"notice/D005/paragraph/9", notice "PDF339頁 D005(9) ただし書及び末文", fun month extra =>
     ∀ item, extra = some item →
       month.exception = some .clinical ∨
         (month.exception = some .clozapine ∧ item.item.isA1c = true)⟩
@@ -150,14 +150,14 @@ private theorem additional_iff (m : Month) (extra : Performance) :
   | some e => cases e <;> simp [extraAllowed, hm]
 
 def albuminMethodRule : Rule Unit Item :=
-  ⟨"D007.13", notice "PDF356頁 D007(13)",
+  ⟨"notice/D007/paragraph/13", notice "PDF356頁 D007(13)",
     fun _ item => MethodAllowed item⟩
 
 /-- 二つの通知が共通して定める、例外のない場合の上限。 -/
 def ordinaryRules : List (Rule Month (List Nat)) :=
-  [⟨"D005.9-ordinary", notice "PDF339頁 D005(9)", fun m charged =>
+  [⟨"notice/D005/paragraph/9", notice "PDF339頁 D005(9)", fun m charged =>
       m.exception = some .none → principalOnly m charged⟩,
-   ⟨"D007.14-ordinary", notice "PDF356頁 D007(14)", fun m charged =>
+   ⟨"notice/D007/paragraph/14", notice "PDF356頁 D007(14)", fun m charged =>
       m.exception = some .none → principalOnly m charged⟩]
 
 theorem ordinary_no_two (m : Month) (charged : List Nat)
@@ -212,7 +212,7 @@ theorem selected_iff (history : Option Month) (s : Selection)
 
 /-- 上限でなく、実施IDと主たる検査を固定した算定案の点数の射影。 -/
 def pointsRule : Rule (Option Month × Selection) Nat :=
-  ⟨"D005.D007-glycemic-points",
+  ⟨"primary/D005/item/9+primary/D007/item/17+primary/D007/item/21",
     ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "2026-10-22取得版",
       "PDF176頁 D005の9及び180頁 D007の17・21", .checkedAgainstSource,
       some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,

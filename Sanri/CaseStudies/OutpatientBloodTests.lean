@@ -164,12 +164,57 @@ private theorem chemistrySelection_iff (c : Context) (items : List Measurement) 
   by_cases h : c.chemistry.eraseDups = c.chemistry <;>
     simp [ChemistrySelection, chemistryItems, h, classified_iff]
 
+private def chemistryItem1Rule : Rule ChemistryItem Nat :=
+  ⟨"primary/D007/item/1", primary "PDF179頁 D007の1",
+    fun item p => item.number = 1 → p = item.toBloodChemistry.points⟩
+
+private def chemistryItem3Rule : Rule ChemistryItem Nat :=
+  ⟨"primary/D007/item/3", primary "PDF179頁 D007の3",
+    fun item p => item.number = 3 → p = item.toBloodChemistry.points⟩
+
+private def NominalPoints : List ChemistryItem → Nat → Prop
+  | [], p => p = 0
+  | item :: rest, p => ∃ price remaining,
+      chemistryItem1Rule.holds item price ∧ chemistryItem3Rule.holds item price ∧
+      NominalPoints rest remaining ∧ p = price + remaining
+
+private theorem nominalPoints_iff (items : List ChemistryItem) (p : Nat) :
+    NominalPoints items p ↔ p = (items.map (·.toBloodChemistry.points)).sum := by
+  induction items generalizing p with
+  | nil => rfl
+  | cons item rest ih =>
+    cases item <;> simp [NominalPoints, chemistryItem1Rule, chemistryItem3Rule, ih,
+      ChemistryItem.number, ChemistryItem.toBloodChemistry, BloodChemistry.Item.number,
+      D007.ScopedItem.number]
+
+private def chemistryNoteIRule : Rule (List ChemistryItem) Nat :=
+  ⟨"primary/D007/note/i", primary "PDF181頁 D007注イ",
+    fun items p => 5 ≤ items.length ∧ items.length < 8 → p = 93⟩
+
+private def chemistryNoteRoRule : Rule (List ChemistryItem) Nat :=
+  ⟨"primary/D007/note/ro", primary "PDF181頁 D007注ロ",
+    fun items p => 8 ≤ items.length ∧ items.length < 10 → p = 99⟩
+
+private def chemistryNoteHaRule : Rule (List ChemistryItem) Nat :=
+  ⟨"primary/D007/note/ha", primary "PDF181頁 D007注ハ",
+    fun items p => 10 ≤ items.length → p = 103⟩
+
+private def DrawPrice (items : List ChemistryItem) (p : Nat) : Prop :=
+  (items.length < 5 → NominalPoints items p) ∧
+  chemistryNoteIRule.holds items p ∧ chemistryNoteRoRule.holds items p ∧
+  chemistryNoteHaRule.holds items p
+
+private theorem drawPrice_iff (items : List ChemistryItem) (p : Nat) :
+    DrawPrice items p ↔ p = BloodChemistry.pointsForItems (items.map (·.toBloodChemistry)) := by
+  rw [← BloodChemistry.pointsRule_iff]
+  simp only [DrawPrice, nominalPoints_iff, chemistryNoteIRule, chemistryNoteRoRule, chemistryNoteHaRule,
+    BloodChemistry.pointsRule, List.length_map, List.map_map, Function.comp_def]
+
 private def DrawPoints (items : List Measurement) : List Nat → Nat → Prop
   | [], p => p = 0
   | draw :: rest, p =>
     ∃ points remaining,
-      BloodChemistry.pointsRule.holds
-        ((items.filter (fun m => m.draw == draw)).map (·.item.toBloodChemistry)) points ∧
+      DrawPrice ((items.filter (fun m => m.draw == draw)).map Measurement.item) points ∧
       DrawPoints items rest remaining ∧ p = points + remaining
 
 private def ChemistryPoints (items : List Measurement) (p : Nat) : Prop :=
@@ -182,7 +227,7 @@ private theorem chemistryPoints_iff (items : List Measurement) (p : Nat) :
   induction draws generalizing p with
   | nil => rfl
   | cons draw rest ih =>
-    simp [DrawPoints, BloodChemistry.pointsRule_iff, ih]
+    simp [DrawPoints, drawPrice_iff, List.map_map, Function.comp_def, ih]
 
 private def CountPoints (items : List BloodCountItem) (p : Nat) : Prop :=
   (items = [] → p = 0) ∧ (items ≠ [] → p = BloodMorphology.Item.completeBloodCount.basePoints)
@@ -191,16 +236,31 @@ private theorem countPoints_iff (items : List BloodCountItem) (p : Nat) :
     CountPoints items p ↔ p = bloodCountPoints items := by
   cases items <;> simp [CountPoints, bloodCountPoints]
 
+private def hematologicalRule : Rule Bool Nat :=
+  ⟨"primary/D026/item/3", primary "PDF192頁 D026の3",
+    fun eligible p => eligible = true → p = SpecimenJudgment.scheduledPoints .hematological⟩
+
+private def biochemicalRule : Rule Bool Nat :=
+  ⟨"primary/D026/item/4", primary "PDF192頁 D026の4",
+    fun eligible p => eligible = true → p = SpecimenJudgment.scheduledPoints .biochemicalI⟩
+
+private def judgmentMonthlyRule : Rule (List SpecimenJudgment.Category) (Nat × Nat) :=
+  ⟨"primary/D026/note/1", primary "PDF192頁 D026注1",
+    fun earlier p => (.hematological ∈ earlier → p.1 = 0) ∧
+      (.biochemicalI ∈ earlier → p.2 = 0)⟩
+
+private def judgmentSumRule : Rule (Nat × Nat) Nat :=
+  ⟨"notice/D026/paragraph/3", notice "PDF402頁 D026(3)", fun p total => total = p.1 + p.2⟩
+
 private def JudgmentPoints (count : List BloodCountItem) (items : List Measurement)
     (earlier : List SpecimenJudgment.Category) (p : Nat) : Prop :=
   ∃ hematological biochemical : Nat,
-    ((count ≠ [] ∧ .hematological ∉ earlier) →
-      hematological = SpecimenJudgment.scheduledPoints .hematological) ∧
-    (¬ (count ≠ [] ∧ .hematological ∉ earlier) → hematological = 0) ∧
-    ((items ≠ [] ∧ .biochemicalI ∉ earlier) →
-      biochemical = SpecimenJudgment.scheduledPoints .biochemicalI) ∧
-    (¬ (items ≠ [] ∧ .biochemicalI ∉ earlier) → biochemical = 0) ∧
-    p = hematological + biochemical
+    hematologicalRule.holds (decide (count ≠ [] ∧ .hematological ∉ earlier)) hematological ∧
+    (count = [] → hematological = 0) ∧
+    biochemicalRule.holds (decide (items ≠ [] ∧ .biochemicalI ∉ earlier)) biochemical ∧
+    (items = [] → biochemical = 0) ∧
+    (judgmentMonthlyRule.holds earlier (hematological, biochemical)) ∧
+    judgmentSumRule.holds (hematological, biochemical) p
 
 private theorem judgmentPoints_iff (count : List BloodCountItem) (items : List Measurement)
     (earlier : List SpecimenJudgment.Category) (p : Nat) :
@@ -208,12 +268,13 @@ private theorem judgmentPoints_iff (count : List BloodCountItem) (items : List M
   by_cases hh : SpecimenJudgment.Category.hematological ∈ earlier <;>
     by_cases hb : SpecimenJudgment.Category.biochemicalI ∈ earlier <;>
     cases count <;> cases items <;>
-    simp [JudgmentPoints, judgmentPoints, SpecimenJudgment.points, SpecimenJudgment.assess,
+    simp [JudgmentPoints, hematologicalRule, biochemicalRule, judgmentMonthlyRule,
+      judgmentSumRule, judgmentPoints, SpecimenJudgment.points, SpecimenJudgment.assess,
       SpecimenJudgment.Assessment.total, SpecimenJudgment.allCategories,
       SpecimenJudgment.categoryFor, SpecimenJudgment.geneRouting,
       BloodMorphology.Item.judgmentTest, BloodMorphology.Item.number,
       SpecimenJudgment.boneMarrowEligible, SpecimenJudgment.immunoelectrophoresisEligible,
-      hh, hb, eq_comm (a := p)]
+      hh, hb, eq_comm (a := p)] <;> grind
 
 private def CollectionScope (c : SpecimenCollection.Context) : Prop :=
   c.item = .venousBlood ∧ c.inpatient = false ∧ 6 ≤ c.ageYears ∧
@@ -223,43 +284,72 @@ private def SeparateCollection (c : SpecimenCollection.Context) (charged : Bool)
   c.duringSurgery = false ∧ c.commonProcedureClaimedSameDay = false ∧
   c.bloodCircuitSampling = false ∧ c.dailyAlreadyClaimed = false ∧ charged = false
 
+private def venousCollectionRule : Rule SpecimenCollection.Context Nat :=
+  ⟨"primary/D400/item/1", primary "PDF210頁 D400の1",
+    fun c p => c.item = .venousBlood ∧
+      (p ≠ 0 → p = SpecimenCollection.basePoints .venousBlood)⟩
+
+private def outpatientCollectionRule : Rule SpecimenCollection.Context Nat :=
+  ⟨"primary/D400/note/1", primary "PDF210頁 D400注1", fun c _ => c.inpatient = false⟩
+
+private def circuitCollectionRule : Rule SpecimenCollection.Context Nat :=
+  ⟨"primary/D400/note/3", primary "PDF210頁 D400注3", fun c p => c.bloodCircuitSampling = true → p = 0⟩
+
+private def dailyCollectionRule : Rule (SpecimenCollection.Context × Bool) Nat :=
+  ⟨"primary/D400/heading", primary "PDF210頁 D400見出し（1日につき）",
+    fun (c, charged) p => c.dailyAlreadyClaimed = true ∨ charged = true → p = 0⟩
+
+private def surgicalCollectionRule : Rule SpecimenCollection.Context Nat :=
+  ⟨"primary/ch2-part3-section4/general/1", primary "PDF210頁 第4節通則1",
+    fun c p => c.duringSurgery = true → p = 0⟩
+
+private def sharedCollectionRule : Rule SpecimenCollection.Context Nat :=
+  ⟨"primary/ch2-part3-section4/general/2", primary "PDF210頁 第4節通則2",
+    fun c p => c.commonProcedureClaimedSameDay = true → p = 0⟩
+
 private def CollectionPoints (c : SpecimenCollection.Context) (charged : Bool) (p : Nat) : Prop :=
-  CollectionScope c ∧
+  venousCollectionRule.holds c p ∧ outpatientCollectionRule.holds c p ∧
+    6 ≤ c.ageYears ∧ c.insuranceMedicalInstitution = true ∧ c.performed = true ∧
     (SeparateCollection c charged → p = SpecimenCollection.basePoints .venousBlood) ∧
-    (¬ SeparateCollection c charged → p = 0)
+    circuitCollectionRule.holds c p ∧ dailyCollectionRule.holds (c, charged) p ∧
+    surgicalCollectionRule.holds c p ∧ sharedCollectionRule.holds c p
 
 private theorem collectionPoints_iff (c : SpecimenCollection.Context) (charged : Bool) (p : Nat) :
     CollectionPoints c charged p ↔ collectionPoints c charged = some p := by
   by_cases hi : c.item = .venousBlood <;> by_cases ha : 6 ≤ c.ageYears <;>
     cases hn : c.inpatient <;> cases hm : c.insuranceMedicalInstitution <;>
     cases hp : c.performed <;>
-    simp [CollectionPoints, CollectionScope, collectionPoints, hi, ← Nat.not_le, ha, hn, hm, hp,
+    simp [CollectionPoints, venousCollectionRule, outpatientCollectionRule, collectionPoints, hi, ← Nat.not_le, ha, hn, hm, hp,
       SpecimenCollection.points, SpecimenCollection.assess]
   cases hs : c.duringSurgery <;> cases hc : c.commonProcedureClaimedSameDay <;>
     cases hb : c.bloodCircuitSampling <;> cases hd : c.dailyAlreadyClaimed <;> cases charged <;>
-    simp [SeparateCollection, hs, hc, hb, hd, SpecimenCollection.notSeparateReason,
+    simp [SeparateCollection, hs, hc, hb, hd, circuitCollectionRule, dailyCollectionRule,
+      surgicalCollectionRule, sharedCollectionRule, SpecimenCollection.notSeparateReason,
       SpecimenCollection.eligible, SpecimenCollection.Assessment.total, SpecimenCollection.isD400,
       SpecimenCollection.isDaily, SpecimenCollection.isSeries, SpecimenCollection.isUnilateral,
-      SpecimenCollection.infantPoints, ha, eq_comm]
+      SpecimenCollection.infantPoints, ha, eq_comm (a := p), SpecimenCollection.basePoints] <;> omega
 
+/-- 採血ごとの内訳、判断料の区分別内訳、採取の非算定条件はそれぞれ内部の条項規則で制約する。
+このリストの結合規則は同一の中間結果の共有や、適用条件成立時の算定を記述するため、
+単一の出典位置に対応しない。D026(2)の初回日は履歴入力の意味であり、日付から算出しない。 -/
 def rules : List (Rule Context Breakdown) :=
-  [⟨"D005.5", primary "PDF176頁 D005の5",
+  [⟨"primary/D005/item/5", primary "PDF176頁 D005の5",
       fun c r => CountPoints c.bloodCount r.count⟩,
-   ⟨"D005.4-notice", notice "PDF338頁 D005(4)",
+   ⟨"notice/D005/paragraph/4", notice "PDF338頁 D005(4)",
       fun c r => (r.count > 0 ↔ c.bloodCount ≠ [])⟩,
-   ⟨"D007.1.3-and-note", primary "PDF179・181頁 D007の1・3及び注イ・ロ",
+   ⟨"unclassified/outpatient-chemistry-composition", primary "PDF179・181頁 D007の1・3及び注イ・ロ",
       fun c r => ∃ items, ChemistrySelection c items ∧ ChemistryPoints items r.chemistry⟩,
-   ⟨"D007.4-notice", notice "PDF356頁 D007(4)",
+   ⟨"notice/D007/paragraph/4", notice "PDF356頁 D007(4)",
       fun c _ => ∀ items, ChemistrySelection c items →
         c.creatinineByJaffe = some true → ∀ m ∈ items, m.item ≠ .creatinine⟩,
-   ⟨"D026.3.4-and-note1", primary "PDF192頁 D026の3・4及び注1",
+   ⟨"unclassified/outpatient-judgment-composition", primary "PDF192頁 D026の3・4及び注1",
       fun c r => ∃ items earlier, ChemistrySelection c items ∧
         c.earlierTestCategoriesThisMonth = some earlier ∧
         JudgmentPoints c.bloodCount items earlier r.judgment⟩,
-   ⟨"D026.2.3-notice", notice "PDF402頁 D026(2)・(3)",
+   ⟨"notice/D026/paragraph/2", notice "PDF402頁 D026(2)",
       fun c r => ∀ earlier, c.earlierTestCategoriesThisMonth = some earlier →
         (.hematological ∈ earlier → .biochemicalI ∈ earlier → r.judgment = 0)⟩,
-   ⟨"D400-and-collection-general", primary "PDF210頁 第4節通則・D400",
+   ⟨"unclassified/outpatient-collection-composition", primary "PDF210頁 第4節通則・D400",
       fun c r => ∃ charged, c.d400AlreadyChargedToday = some charged ∧
         CollectionPoints c.collection charged r.collection⟩]
 
@@ -316,7 +406,10 @@ theorem assessed_iff (c : Context) (r : Breakdown) :
     · intro history hhistory hh hb
       have same := Option.some.inj hhistory
       subst history
-      obtain ⟨a, b, _, h₁, _, h₂, total⟩ := judgment
+      obtain ⟨a, b, _, _, _, _, ⟨h₁, h₂⟩, total⟩ := judgment
+      change _ → a = 0 at h₁
+      change _ → b = 0 at h₂
+      change _ = a + b at total
       simp [hh, hb] at h₁ h₂
       simpa [h₁, h₂] using total
 
@@ -332,20 +425,29 @@ def Scope (c : Context) : Prop :=
 
 theorem determines_on : DeterminesOn Scope rules := by
   rintro c ⟨⟨items, hi⟩, ⟨earlier, he⟩, ⟨charged, hd⟩, hc⟩
-  classical
-  let collection := if SeparateCollection c.collection charged then
-    SpecimenCollection.basePoints .venousBlood else 0
-  let hematological := if c.bloodCount ≠ [] ∧ .hematological ∉ earlier then
-    SpecimenJudgment.scheduledPoints .hematological else 0
-  let biochemical := if items ≠ [] ∧ .biochemicalI ∉ earlier then
-    SpecimenJudgment.scheduledPoints .biochemicalI else 0
-  have hj : JudgmentPoints c.bloodCount items earlier (hematological + biochemical) :=
-    ⟨hematological, biochemical, fun h => ite_eq_left h, fun h => ite_eq_right h,
-      fun h => ite_eq_left h, fun h => ite_eq_right h, rfl⟩
-  have hs : CollectionPoints c.collection charged collection :=
-    ⟨hc, fun h => ite_eq_left h, fun h => ite_eq_right h⟩
-  refine ⟨⟨⟨bloodCountPoints c.bloodCount, chemistryPoints items,
-    hematological + biochemical, collection⟩, (assessed_iff c _).mpr ?_⟩, ?_⟩
+  have existsJudgment : ∃ p, JudgmentPoints c.bloodCount items earlier p := by
+    classical
+    let a := if c.bloodCount ≠ [] ∧ .hematological ∉ earlier then
+      SpecimenJudgment.scheduledPoints .hematological else 0
+    let b := if items ≠ [] ∧ .biochemicalI ∉ earlier then
+      SpecimenJudgment.scheduledPoints .biochemicalI else 0
+    refine ⟨a + b, a, b, ?_, ?_, ?_, ?_, ⟨?_, ?_⟩, rfl⟩ <;>
+      simp +contextual [a, b, hematologicalRule, biochemicalRule]
+  have existsCollection : ∃ p, CollectionPoints c.collection charged p := by
+    classical
+    obtain ⟨item, outpatient, age, institution, performed⟩ := hc
+    refine ⟨if SeparateCollection c.collection charged then
+      SpecimenCollection.basePoints .venousBlood else 0, ⟨item, ?_⟩,
+      outpatient, age, institution, performed, ?_, ?_, ?_, ?_, ?_⟩
+    · split <;> simp
+    · exact fun h => ite_eq_left h
+    all_goals
+      simp +contextual [circuitCollectionRule, dailyCollectionRule, surgicalCollectionRule,
+        sharedCollectionRule, SeparateCollection] <;> grind
+  obtain ⟨judgment, hj⟩ := existsJudgment
+  obtain ⟨collection, hs⟩ := existsCollection
+  refine ⟨⟨⟨bloodCountPoints c.bloodCount, chemistryPoints items, judgment, collection⟩,
+    (assessed_iff c _).mpr ?_⟩, ?_⟩
   · simp [assess, (chemistrySelection_iff _ _).mp hi, he, hd,
       (judgmentPoints_iff _ _ _ _).mp hj, (collectionPoints_iff _ _ _).mp hs]
   · intro a b ha hb

@@ -294,13 +294,13 @@ def source : SourceRef := {
 }
 
 def requireZero : Rule Unit Nat := {
-  id := "require-zero"
+  id := "unclassified/require-zero"
   source := source
   holds := fun _ result => result = 0
 }
 
 def requireOne : Rule Unit Nat := {
-  id := "require-one"
+  id := "unclassified/require-one"
   source := source
   holds := fun _ result => result = 1
 }

@@ -167,13 +167,13 @@ private def notice (location : String) : SourceRef :=
 
 def Pair.rule (pair : Pair) : Rule Bool Choice :=
   let (id, location) := match pair with
-    | .ketones => ("D007.9-notice", "PDF356頁 D007(9)")
-    | .bicarbonateAndBloodGas => ("D007.12-notice", "PDF356頁 D007(12)")
-    | .bileAcids => ("D007.15-notice", "PDF356頁 D007(15)")
-    | .carnitineAndD010 => ("D007.17e-notice", "PDF357頁 D007(17)エ")
-    | .bapAndD008 => ("D007.18-notice", "PDF357頁 D007(18)")
-    | .cystatinAndPentosidine => ("D007.23i-25-notice", "PDF357頁 D007(23)イ・(25)")
-    | .inulinAndCreatinineClearance => ("D007.26-notice", "PDF357頁 D007(26)")
+    | .ketones => ("notice/D007/paragraph/9", "PDF356頁 D007(9)")
+    | .bicarbonateAndBloodGas => ("notice/D007/paragraph/12", "PDF356頁 D007(12)")
+    | .bileAcids => ("notice/D007/paragraph/15", "PDF356頁 D007(15)")
+    | .carnitineAndD010 => ("notice/D007/paragraph/17/e", "PDF357頁 D007(17)エ")
+    | .bapAndD008 => ("notice/D007/paragraph/18", "PDF357頁 D007(18)")
+    | .cystatinAndPentosidine => ("notice/D007/paragraph/23/i+notice/D007/paragraph/25", "PDF357頁 D007(23)イ・(25)")
+    | .inulinAndCreatinineClearance => ("notice/D007/paragraph/26", "PDF357頁 D007(26)")
   ⟨id, notice location, pair.permits⟩
 
 private def primary (location : String) : SourceRef :=
@@ -181,11 +181,11 @@ private def primary (location : String) : SourceRef :=
     location, .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩
 
 def pointsRule : Rule Context Nat :=
-  ⟨"D007.9-24-and-35", primary "PDF179〜180頁 D007の9〜24及び35の血液ガス分析",
+  ⟨"primary/D007/item/9..24+primary/D007/item/35", primary "PDF179〜180頁 D007の9〜24及び35の血液ガス分析",
     fun c p => c.item ≠ .urinarySulfatedBileAcids → c.item.scheduledPoints = some p⟩
 
 def urinaryReferenceRule : Rule Context Nat :=
-  ⟨"D007.15-reference", notice "PDF356頁 D007(15)", fun c p =>
+  ⟨"notice/D007/paragraph/15", notice "PDF356頁 D007(15)", fun c p =>
     c.item = .urinarySulfatedBileAcids → Item.scheduledPoints Item.cholesterolFraction = some p⟩
 
 def CarnitineContext.Requirements (c : CarnitineContext) : Prop :=
@@ -215,27 +215,27 @@ theorem CarnitineContext.requirements_iff (c : CarnitineContext) :
             cases indication <;> simp
 
 def urinaryBileAcidMethodRule : Rule Context Unit :=
-  ⟨"D007(15)-urinaryBileAcidMethod", notice "PDF356頁 D007(15)", fun c _ =>
+  ⟨"notice/D007/paragraph/15", notice "PDF356頁 D007(15)", fun c _ =>
     c.item = .urinarySulfatedBileAcids →
     c.urinaryBileAcidsForHepatobiliaryDiagnosis = some true ∧
     c.urinaryBileAcidsEnzymaticMethod = some true⟩
 
 def ldIsoenzymeMethodRule : Rule Context Unit :=
-  ⟨"D007(16)-ldIsoenzymeMethod", notice "PDF356頁 D007(16)", fun c _ =>
+  ⟨"notice/D007/paragraph/16", notice "PDF356頁 D007(16)", fun c _ =>
     c.item = .ldIsoenzyme1 → c.enzymeInhibition = some true⟩
 
 def carnitineRule : Rule Context Unit :=
-  ⟨"D007(17)ア〜ウ-carnitine", notice "PDF356〜357頁 D007(17)ア〜ウ", fun c _ =>
+  ⟨"notice/D007/paragraph/17/a+notice/D007/paragraph/17/i+notice/D007/paragraph/17/u", notice "PDF356〜357頁 D007(17)ア〜ウ", fun c _ =>
     c.item = .totalCarnitine ∨ c.item = .freeCarnitine →
     ∃ details, c.carnitine = some details ∧ details.Requirements⟩
 
 def alpMethodRule : Rule Context Unit :=
-  ⟨"D007(18)-alpMethod", notice "PDF357頁 D007(18)", fun c _ =>
+  ⟨"notice/D007/paragraph/18", notice "PDF357頁 D007(18)", fun c _ =>
     c.item = .alpIsoenzymesAndBap →
     c.agaroseElectrophoresis = some true ∧ c.simultaneousInSameSeries = some true⟩
 
 def apolipoproteinRule : Rule Context Unit :=
-  ⟨"D007(10)-apolipoprotein", notice "PDF356頁 D007(10)", fun c _ =>
+  ⟨"notice/D007/paragraph/10", notice "PDF356頁 D007(10)", fun c _ =>
     ∀ measured, c.item = .apolipoproteins measured → measured ≠ []⟩
 
 def eligibilityRules : List (Rule Context Unit) :=
@@ -259,11 +259,11 @@ theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true
   all_goals cases hc : c.carnitine <;> simp [CarnitineContext.requirements_iff]
 
 def eligibilityRule : Rule Context Nat :=
-  ⟨"D007.eligibility-9-24", notice "PDF356〜357頁 D007(10)・(15)〜(18)",
+  ⟨"unclassified/d007-further-eligibility-composite", notice "PDF356〜357頁 D007(10)・(15)〜(18)",
     fun c _ => c.item ≠ .bloodGas → Eligibility c⟩
 
 def bloodGasRule : Rule Context Nat :=
-  ⟨"D007.35-note", primary "PDF180頁 D007の35の注",
+  ⟨"primary/D007/item/35/note", primary "PDF180頁 D007の35の注",
     fun c _ => c.item = .bloodGas → c.bloodGasInHouse = some true⟩
 
 def individualRules := [pointsRule, urinaryReferenceRule, eligibilityRule, bloodGasRule]
