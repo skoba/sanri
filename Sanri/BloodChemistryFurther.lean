@@ -1,4 +1,5 @@
 import Sanri.Logic
+import Sanri.D007
 
 namespace Sanri.MedicalFee.BloodChemistryFurther
 
@@ -7,23 +8,27 @@ open Sanri.Logic
 /-! D007の9〜24の外来実施料と、通知が参照する35の血液ガス分析。
 17・21の糖代謝検査は GlycemicTests の月内モデルを使う。 -/
 
-inductive Apolipoprotein where
-  | aI | aII | b | cII | cIII | e
-  deriving DecidableEq, Repr
+abbrev Apolipoprotein := D007.Apolipoprotein
+namespace Apolipoprotein
+export D007.Apolipoprotein (aI aII b cII cIII e)
+end Apolipoprotein
 
-inductive OrganicAcid where
-  | glutathione | lactate | pyruvate | alphaKetoglutarate
-  deriving DecidableEq, Repr
+abbrev OrganicAcid := D007.OrganicAcid
+namespace OrganicAcid
+export D007.OrganicAcid (glutathione lactate pyruvate alphaKetoglutarate)
+end OrganicAcid
 
-inductive Item where
-  | ketoneBodies | apolipoproteins (measured : List Apolipoprotein)
-  | adenosineDeaminase | guanase | organicAcid (substance : OrganicAcid) | bileAcids
-  | alpIsoenzymes | amylaseIsoenzymes | gammaGTIsoenzymes | ldIsoenzymes | bicarbonate
-  | astIsoenzymes | lipoproteinFraction | ammonia | ckIsoenzymes | cholesterolFraction
-  | urinarySulfatedBileAcids | ketoneFractions | freeFattyAcids | lcat
-  | g6pd | lipoproteinPag | glycocholicAcid | ckMbMass
-  | ldIsoenzyme1 | totalCarnitine | freeCarnitine | alpIsoenzymesAndBap | bloodGas
-  deriving DecidableEq, Repr
+abbrev Item := D007.ScopedItem .further
+
+namespace Item
+export D007.ScopedItem (
+  ketoneBodies apolipoproteins adenosineDeaminase guanase organicAcid
+  bileAcids urinarySulfatedBileAcids alpIsoenzymes amylaseIsoenzymes gammaGTIsoenzymes
+  ldIsoenzymes bicarbonate astIsoenzymes lipoproteinFraction ammonia
+  ckIsoenzymes cholesterolFraction ketoneFractions freeFattyAcids lcat
+  g6pd lipoproteinPag glycocholicAcid ckMbMass ldIsoenzyme1
+  totalCarnitine freeCarnitine alpIsoenzymesAndBap bloodGas)
+end Item
 
 def apolipoproteinPoints (measured : List Apolipoprotein) : Option Nat :=
   match measured.eraseDups.length with
@@ -181,7 +186,7 @@ def pointsRule : Rule Context Nat :=
 
 def urinaryReferenceRule : Rule Context Nat :=
   ⟨"D007.15-reference", notice "PDF356頁 D007(15)", fun c p =>
-    c.item = .urinarySulfatedBileAcids → Item.cholesterolFraction.scheduledPoints = some p⟩
+    c.item = .urinarySulfatedBileAcids → Item.scheduledPoints Item.cholesterolFraction = some p⟩
 
 def CarnitineContext.Requirements (c : CarnitineContext) : Prop :=
   c.followsGuidelines = some true ∧ c.enzymaticCycling = some true ∧
@@ -336,6 +341,14 @@ example : assess {
     item := .freeCarnitine
     carnitine := some ⟨some .listedCarnitineDeficiencyRisk, some true, some true, none, some false⟩ } =
     .ineligible := by decide
+
+example : Eligibility { item := .apolipoproteins [.aI, .aII, .b] } ∧
+    ∃ p, Item.scheduledPoints (.apolipoproteins [.aI, .aII, .b]) = some p :=
+  ⟨(eligibility_iff _).mpr rfl, 94, rfl⟩
+
+example : ¬ Eligibility { item := .bloodGas, bloodGasInHouse := some false } := by
+  rw [eligibility_iff]
+  decide
 
 example : DeterminesAt individualRules { item := .apolipoproteins [.aI, .aII, .b] } :=
   determines_individual _ 94 rfl

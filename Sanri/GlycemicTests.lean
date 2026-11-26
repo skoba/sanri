@@ -1,4 +1,5 @@
 import Sanri.BloodMorphology
+import Sanri.D007
 
 namespace Sanri.MedicalFee.GlycemicTests
 
@@ -15,6 +16,12 @@ inductive Item where
   | glycatedAlbumin (method : Option AlbuminMethod)
   | anhydroglucitol
   deriving DecidableEq, Repr
+
+/-- D007側への射影。グリコアルブミンの測定法はこのモジュールの入力に保持する。 -/
+def Item.toD007 : Item → Option D007.Item
+  | .a1c => none
+  | .glycatedAlbumin _ => some ⟨.glycemic, .glycatedAlbumin⟩
+  | .anhydroglucitol => some ⟨.glycemic, .anhydroglucitol⟩
 
 def Item.points : Item → Nat
   | .a1c => BloodMorphology.Item.hemoglobinA1c.basePoints
@@ -236,6 +243,12 @@ theorem determines_selected_points_on :
 
 private def monthWith (exception : Exception) : Month :=
   ⟨[⟨1, .a1c⟩, ⟨2, .glycatedAlbumin (some .enzymatic)⟩, ⟨3, .anhydroglucitol⟩], some exception⟩
+
+example : ∃ main extra, Selected (some (monthWith .none)) ⟨2, none⟩ main extra :=
+  ⟨⟨2, .glycatedAlbumin (some .enzymatic)⟩, none, (selected_iff _ _ _ _).mpr rfl⟩
+
+example : ¬ ∃ main extra, Selected none ⟨2, none⟩ main extra := by
+  simp [Selected]
 
 example : (assess (some (monthWith .none)) ⟨2, none⟩).points = some 55 := by decide
 example : assess (some (monthWith .none)) ⟨2, some 1⟩ = .invalidSelection := by decide

@@ -154,15 +154,20 @@ def marrowStainRule : Rule Context Nat :=
       c.item = .boneMarrowPicture → ∃ stains, c.stains = some stains ∧
       p = Item.boneMarrowPicture.stainRate * stains.eraseDups.length⟩
 
+/-- D005の個別実施料モデルでは、6・14の注で扱う染色加算だけを集計する。
+その対象外の加算成分を0とする閉世界仮定であり、独立した条項の転記ではない。 -/
+def ClosedWorldStainPoints (c : Context) (p : Nat) : Prop :=
+  c.item ≠ .microscopicDifferential → c.item ≠ .boneMarrowPicture → p = 0
+
 /-- 通知(6)の染色種類は入力型 Stain で固定する。 -/
 def StainPoints (c : Context) (p : Nat) : Prop :=
   Satisfies [microscopicStainRule, marrowStainRule] c p ∧
-    (c.item ≠ .microscopicDifferential → c.item ≠ .boneMarrowPicture → p = 0)
+    ClosedWorldStainPoints c p
 
 theorem stainPoints_iff (c : Context) (p : Nat) :
     StainPoints c p ↔ stainAddition c = some p := by
   cases hi : c.item <;> cases hc : c.stains <;>
-    simp [StainPoints, satisfies_cons, satisfies_nil, microscopicStainRule, marrowStainRule,
+    simp [StainPoints, ClosedWorldStainPoints, satisfies_cons, satisfies_nil, microscopicStainRule, marrowStainRule,
       stainAddition, Item.stainRate, hi, hc, eq_comm]
 
 /-- モデルで確認する通知の個別要件。ESRの院内要件も保持する。 -/
@@ -331,6 +336,12 @@ private def differential : Context :=
   { item := .microscopicDifferential
     cellClasses := some [.lymphocyte, .monocyte, .neutrophil, .eosinophil, .basophil]
     stains := some [.iron, .pas] }
+
+example : Eligibility differential ∧ ∃ p, StainPoints differential p :=
+  ⟨(eligibility_iff _).mpr rfl, 104, (stainPoints_iff _ _).mpr rfl⟩
+
+example : ¬ ∃ p, StainPoints { differential with stains := none } p := by
+  simp [stainPoints_iff, differential, stainAddition, Item.stainRate]
 
 example : assess differential = .payable 25 104 := by decide
 example : assess { differential with item := .boneMarrowPicture } = .payable 788 120 := by decide

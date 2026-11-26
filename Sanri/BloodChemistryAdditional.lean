@@ -8,12 +8,15 @@ open BloodChemistryFurther (Assessment)
 /-! D007の25〜34と、通知(21)の組合せが参照する38のSP-D。
 一患者の外来実施を扱う。暦上の間隔は当該検査の履歴から確認した結果を受け取る。 -/
 
-inductive Item where
-  | ferritinSemiquantitative | ferritinQuantitative | ethanol | lipoproteinA
-  | heparin | kl6 | troponinI | troponinTQualitative | troponinTQuantitative
-  | aluminium | cystatinC | vitaminD25 | pentosidine | inulin | lipoproteinHplc
-  | surfactantProteinA | galactose | surfactantProteinD
-  deriving DecidableEq, Repr
+abbrev Item := D007.ScopedItem .additional
+
+namespace Item
+export D007.ScopedItem (
+  ferritinSemiquantitative ferritinQuantitative ethanol lipoproteinA heparin
+  kl6 troponinI troponinTQualitative troponinTQuantitative aluminium
+  cystatinC vitaminD25 pentosidine inulin lipoproteinHplc
+  surfactantProteinA galactose surfactantProteinD)
+end Item
 
 def Item.points : Item → Nat
   | .ferritinSemiquantitative | .ferritinQuantitative => 102
@@ -244,6 +247,12 @@ def Group.assessPrincipal (group : Group) (performed : Option (List Item))
 private def renal : Context :=
   { item := .cystatinC, method := some .nephelometry,
     suspectedRenalDeclineFromBunOrCreatinine := some true, threeMonthLimitAllows := some true }
+
+example : Eligibility renal := (eligibility_iff _).mpr rfl
+
+example : ¬ Eligibility { renal with threeMonthLimitAllows := none } := by
+  rw [eligibility_iff]
+  decide
 
 example : DeterminesAt individualRules renal := determines_individual _ rfl
 example : assess renal = .payable 109 := by decide

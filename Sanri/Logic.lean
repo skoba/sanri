@@ -247,6 +247,42 @@ theorem determinesAt_iff_of_equivalentOn {scope : Context → Prop}
     intro first second hfirst hsecond
     exact unique first second (h.1 context hscope first hfirst) (h.1 context hscope second hsecond)
 
+private theorem filterAux_reverse (f : α → Option Bool)
+    (items acc : List α) :
+    (List.filterAuxM f items acc).map List.reverse =
+      (items.filterM f).map (acc.reverse ++ ·) := by
+  have aux (xs acc tail : List α) :
+      List.filterAuxM f xs (acc ++ tail) =
+        (List.filterAuxM f xs acc).map (· ++ tail) := by
+    induction xs generalizing acc with
+    | nil => rfl
+    | cons head rest ih =>
+      cases hf : f head with
+      | none => simp [hf]
+      | some b =>
+        cases b
+        · simpa [hf] using ih acc
+        · simpa [hf] using ih (head :: acc)
+  have h := congrArg (Option.map List.reverse) (aux items [] acc)
+  cases hc : List.filterAuxM f items [] <;>
+    simpa [List.filterM, hc, List.reverse_append] using h
+
+theorem option_filterM_cons (f : α → Option Bool)
+    (m : α) (rest : List α) :
+    (m :: rest).filterM f =
+      (f m).bind (fun keep => (rest.filterM f).map (fun items =>
+        if keep then m :: items else items)) := by
+  cases hf : f m with
+  | none => simp [List.filterM, hf]
+  | some b =>
+    have eq (acc : List α) :
+        (List.filterAuxM f rest acc).bind (some ∘ List.reverse) =
+          (rest.filterM f).map (acc.reverse ++ ·) := by
+      simpa [Option.map_eq_bind, Function.comp_def] using filterAux_reverse f rest acc
+    cases b
+    · simp [List.filterM, hf]
+    · simpa [List.filterM, hf, Function.comp_def] using eq [m]
+
 /-! 以下は論理基盤の性質を示す合成例であり、実在の診療報酬規則ではない。 -/
 namespace SyntheticExamples
 

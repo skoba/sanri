@@ -125,42 +125,6 @@ private inductive Classified (c : Context) : List Measurement → List Measureme
   | drop {m rest items} :
       Rejected c m.item → Classified c rest items → Classified c (m :: rest) items
 
-private theorem filterAux_reverse (f : Measurement → Option Bool)
-    (items acc : List Measurement) :
-    (List.filterAuxM f items acc).map List.reverse =
-      (items.filterM f).map (acc.reverse ++ ·) := by
-  have aux (xs acc tail : List Measurement) :
-      List.filterAuxM f xs (acc ++ tail) =
-        (List.filterAuxM f xs acc).map (· ++ tail) := by
-    induction xs generalizing acc with
-    | nil => rfl
-    | cons head rest ih =>
-      cases hf : f head with
-      | none => simp [hf]
-      | some b =>
-        cases b
-        · simpa [hf] using ih acc
-        · simpa [hf] using ih (head :: acc)
-  have h := congrArg (Option.map List.reverse) (aux items [] acc)
-  cases hc : List.filterAuxM f items [] <;>
-    simpa [List.filterM, hc, List.reverse_append] using h
-
-private theorem filterM_cons (f : Measurement → Option Bool)
-    (m : Measurement) (rest : List Measurement) :
-    (m :: rest).filterM f =
-      (f m).bind (fun keep => (rest.filterM f).map (fun items =>
-        if keep then m :: items else items)) := by
-  cases hf : f m with
-  | none => simp [List.filterM, hf]
-  | some b =>
-    have eq (acc : List Measurement) :
-        (List.filterAuxM f rest acc).bind (some ∘ List.reverse) =
-          (rest.filterM f).map (acc.reverse ++ ·) := by
-      simpa [Option.map_eq_bind, Function.comp_def] using filterAux_reverse f rest acc
-    cases b
-    · simp [List.filterM, hf]
-    · simpa [List.filterM, hf, Function.comp_def] using eq [m]
-
 private theorem classified_iff (c : Context) (performed items : List Measurement) :
     Classified c performed items ↔ performed.filterM (fun m => eligible c m.item) = some items := by
   induction performed generalizing items with
@@ -178,15 +142,15 @@ private theorem classified_iff (c : Context) (performed items : List Measurement
       cases h with
       | keep hm hs =>
         have he : eligible c m.item = some true := (BloodChemistry.eligible_iff _ _).mp hm
-        simp [filterM_cons, he, (ih _).mp hs]
+        simp [option_filterM_cons, he, (ih _).mp hs]
       | drop hm hs =>
-        simp [filterM_cons, (rejected_iff _ _).mp hm, (ih _).mp hs]
+        simp [option_filterM_cons, (rejected_iff _ _).mp hm, (ih _).mp hs]
     · intro h
       cases he : eligible c m.item with
-      | none => simp [filterM_cons, he] at h
+      | none => simp [option_filterM_cons, he] at h
       | some b =>
         cases hs : rest.filterM (fun m => eligible c m.item) <;>
-          cases b <;> simp [filterM_cons, he, hs] at h
+          cases b <;> simp [option_filterM_cons, he, hs] at h
         · subst items
           exact .drop ((rejected_iff _ _).mpr he) ((ih _).mpr hs)
         · subst items
@@ -396,6 +360,13 @@ def exampleContext : Context where
   earlierTestCategoriesThisMonth := some []
   d400AlreadyChargedToday := some false
   collection := { item := .venousBlood, ageYears := 40 }
+
+example : Scope exampleContext := by
+  refine ⟨⟨_, (chemistrySelection_iff _ _).mpr rfl⟩, ⟨[], rfl⟩, ⟨false, rfl⟩, ?_⟩
+  exact ⟨rfl, rfl, by decide, rfl, rfl⟩
+
+example : ¬ Scope { exampleContext with d400AlreadyChargedToday := none } := by
+  simp [Scope]
 
 theorem example_satisfies : Satisfies rules exampleContext ⟨21, 99, 269, 40⟩ := by
   exact (assessed_iff _ _).mpr (by decide)

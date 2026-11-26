@@ -1,4 +1,5 @@
 import Sanri.Logic
+import Sanri.D007
 
 namespace Sanri.MedicalFee.BloodChemistry
 
@@ -8,25 +9,22 @@ open Sanri.Logic
 同時・併測の事実は採血IDから導かず、組合せごとに入力する。
 別採血にまたがる同時測定、同一採血内の同じ検査の反復、入院時初回加算は別の課題。 -/
 
-inductive Item where
-  | totalBilirubin | directOrConjugatedBilirubin | totalProtein | albumin
-  | bun | creatinine | uricAcid | alp | cholinesterase | gammaGT | triglycerides
-  | sodium | chloride | potassium | calcium | magnesium | creatine | glucose
-  | ld | amylase | lap | ck | aldolase | freeCholesterol | iron | bloodKetoneGlucoseChloride
-  | uibcColorimetric | tibcColorimetric | phospholipids
-  | hdlCholesterol | inorganicPhosphorus | phosphate | totalCholesterol | ast | alt
-  | ldlCholesterol | proteinFractionation | copper | lipase | ionizedCalcium | manganese
-  deriving DecidableEq, Repr
+abbrev Item := D007.ScopedItem .draw
 
-def Item.number : Item → Nat
-  | .phospholipids => 2
-  | .hdlCholesterol | .inorganicPhosphorus | .phosphate | .totalCholesterol | .ast | .alt => 3
-  | .ldlCholesterol | .proteinFractionation => 4
-  | .copper => 5
-  | .lipase => 6
-  | .ionizedCalcium => 7
-  | .manganese => 8
-  | _ => 1
+namespace Item
+export D007.ScopedItem (
+  totalBilirubin directOrConjugatedBilirubin totalProtein albumin bun
+  creatinine uricAcid alp cholinesterase gammaGT
+  triglycerides sodium chloride potassium calcium
+  magnesium creatine glucose ld amylase
+  lap ck aldolase freeCholesterol iron
+  bloodKetoneGlucoseChloride uibcColorimetric tibcColorimetric phospholipids hdlCholesterol
+  inorganicPhosphorus phosphate totalCholesterol ast alt
+  ldlCholesterol proteinFractionation copper lipase ionizedCalcium
+  manganese)
+end Item
+
+def Item.number (item : Item) : Nat := D007.ScopedItem.number item
 
 def Item.points (item : Item) : Nat :=
   match item.number with
@@ -247,6 +245,133 @@ def calciumRule := pairedRule "D007.2" "PDF355頁 D007(2)" calciumGroup 1
 def ironBindingRule := pairedRule "D007.3" "PDF355頁 D007(3)" ironBindingGroup 1
 def cholesterolRule := pairedRule "D007.5" "PDF356頁 D007(5)" cholesterolGroup 2
 def proteinRule := pairedRule "D007.7" "PDF356頁 D007(7)" proteinGroup 2
+
+/-- 結果を未確認とする場合と、個別要件の不成立が確定する場合を区別する。 -/
+private def Rejected (c : Draw) : Item → Prop
+  | .albumin => c.albuminByModifiedBCP = some false
+  | .creatinine => c.creatinineByJaffe = some true
+  | .bloodKetoneGlucoseChloride => c.ketoneGlucoseChlorideMethodAllowed = some false
+  | .manganese => ∃ details, c.manganese = some details ∧
+      let duration := if details.reducedBiliaryExcretion then
+        details.atLeastTwoWeeks else details.atLeastOneMonth
+      duration = some false ∨ duration = some true ∧ details.intervalAllows = some false
+  | _ => False
+
+private theorem rejected_iff (c : Draw) (item : Item) :
+    Rejected c item ↔ c.eligible item = some false := by
+  cases item <;> simp [Rejected, Draw.eligible]
+  cases hc : c.manganese with
+  | none => simp
+  | some details =>
+    simp only [Option.some.injEq, exists_eq_left', Option.bind_some]
+    cases hb : details.reducedBiliaryExcretion
+    · cases hd : details.atLeastOneMonth with
+      | none => simp [ManganeseContext.eligible, hb, hd]
+      | some allows => cases allows <;> simp [ManganeseContext.eligible, hb, hd]
+    · cases hd : details.atLeastTwoWeeks with
+      | none => simp [ManganeseContext.eligible, hb, hd]
+      | some allows => cases allows <;> simp [ManganeseContext.eligible, hb, hd]
+
+/-- 適格性が未確認の項目があれば、この採血の選別結果は確定しない。 -/
+private def Classified (c : Draw) : List Item → List Item → Prop
+  | [], selected => selected = []
+  | item :: rest, selected =>
+      (∃ tail, Satisfies eligibilityRules c item ∧ Classified c rest tail ∧
+        selected = item :: tail) ∨
+      (Rejected c item ∧ Classified c rest selected)
+
+private theorem classified_iff (c : Draw) (performed selected : List Item) :
+    Classified c performed selected ↔ performed.filterM c.eligible = some selected := by
+  induction performed generalizing selected with
+  | nil => change selected = [] ↔ some [] = some selected
+           simp [eq_comm]
+  | cons item rest ih =>
+    simp only [Classified, eligible_iff, rejected_iff, ih, option_filterM_cons, Option.bind_eq_some_iff,
+      Option.map_eq_some_iff]
+    cases c.eligible item with
+    | none => simp
+    | some b => cases b <;> simp [eq_comm]
+
+/-- 同時・併測の条件と、入力で指定された除外項目を一段について記述する。
+対象がそろわない場合は、同時・併測の入力を要求しない。 -/
+private def combinationSelectionRule (base : Rule (List Item) (List Item)) (group : List Item) :
+    Rule (Combination × List Item) (List Item) :=
+  ⟨base.id, base.source, fun (choice, items) selected =>
+    ((group.all items.contains = false ∨ choice.together = some false) ∧ selected = items) ∨
+    (group.all items.contains = true ∧ choice.together = some true ∧
+      ∃ excluded, choice.excluded = some excluded ∧ excluded ∈ group ∧
+        selected = items.filter (· != excluded))⟩
+
+private theorem combinationSelection_iff (base : Rule (List Item) (List Item))
+    (group : List Item) (choice : Combination) (items selected : List Item) :
+    (combinationSelectionRule base group).holds (choice, items) selected ↔
+      choice.apply group items = some selected := by
+  unfold combinationSelectionRule
+  dsimp only
+  cases hg : group.all items.contains with
+  | false => simp [Combination.apply, hg, eq_comm (a := selected)]
+  | true =>
+    cases ht : choice.together with
+    | none => simp [Combination.apply, hg, ht]
+    | some together =>
+      cases together
+      · simp [Combination.apply, hg, ht, eq_comm (a := selected)]
+      · cases he : choice.excluded with
+        | none => simp [Combination.apply, hg, ht, he]
+        | some excluded =>
+          by_cases hm : excluded ∈ group <;>
+            simp [Combination.apply, hg, ht, he, hm, List.contains_eq_mem, eq_comm (a := selected)]
+
+/-- 既存の同一採血モデルの制約群。反復なしと代表元への正規化はモデルの条件。
+各段は明示された組合せ入力を用い、入力から選択を作らない。 -/
+def DrawPoints (c : Draw) (p : Nat) : Prop :=
+  c.performed.eraseDups = c.performed ∧
+    ∃ eligible calcium iron cholesterol protein,
+      Classified c c.performed eligible ∧
+      (combinationSelectionRule calciumRule calciumGroup).holds (c.calcium, eligible) calcium ∧
+      (combinationSelectionRule ironBindingRule ironBindingGroup).holds (c.ironBinding, calcium) iron ∧
+      (combinationSelectionRule cholesterolRule cholesterolGroup).holds (c.cholesterol, iron) cholesterol ∧
+      (combinationSelectionRule proteinRule proteinGroup).holds (c.protein, cholesterol) protein ∧
+      pointsRule.holds ((protein.map Item.billingItem).eraseDups) p
+
+/-- 一採血での選別・固定した組合せ選択・合算点数についての健全性と完全性。 -/
+theorem drawPoints_iff (c : Draw) (p : Nat) : DrawPoints c p ↔ points c = some p := by
+  simp only [DrawPoints, classified_iff, combinationSelection_iff, pointsRule_iff,
+    points, billableItems, bne_iff_ne, ne_eq]
+  by_cases h : c.performed.eraseDups = c.performed
+  · simp only [h, not_true_eq_false, ite_false, true_and]
+    change _ ↔ Option.map pointsForItems
+      (((c.performed.filterM c.eligible).bind fun eligible =>
+        (c.calcium.apply calciumGroup eligible).bind fun calcium =>
+        (c.ironBinding.apply ironBindingGroup calcium).bind fun iron =>
+        (c.cholesterol.apply cholesterolGroup iron).bind fun cholesterol =>
+        (c.protein.apply proteinGroup cholesterol).bind fun protein =>
+        some (protein.map Item.billingItem).eraseDups)) = some p
+    simp only [Option.map_eq_bind, Option.bind_eq_some_iff, Function.comp_apply, Option.some.injEq]
+    constructor
+    · rintro ⟨eligible, calcium, iron, cholesterol, protein, h₁, h₂, h₃, h₄, h₅, hp⟩
+      exact ⟨_, ⟨eligible, h₁, calcium, h₂, iron, h₃, cholesterol, h₄, protein, h₅, rfl⟩, hp.symm⟩
+    · rintro ⟨_, ⟨eligible, h₁, calcium, h₂, iron, h₃, cholesterol, h₄, protein, h₅, rfl⟩, hp⟩
+      exact ⟨eligible, calcium, iron, cholesterol, protein, h₁, h₂, h₃, h₄, h₅, hp.symm⟩
+  · simp [h]
+
+example : DrawPoints
+    { performed := [.calcium, .ionizedCalcium], calcium := ⟨some true, some .calcium⟩ }
+    26 := by
+  rw [drawPoints_iff]
+  decide
+
+example : ¬ ∃ p, DrawPoints { performed := [.calcium, .ionizedCalcium] } p := by
+  simp only [drawPoints_iff]
+  have h : points { performed := [.calcium, .ionizedCalcium] } = none := by decide
+  simp [h]
+
+-- 両定理の入力範囲は全リスト。採血全体の判定には別途、選択情報が必要。
+example : DeterminesAt mergedItemRules [.sodium, .chloride] :=
+  determines_merged_items_on _ trivial
+
+example : DeterminesAt [pointsRule] [.sodium] ∧ pointsRule.holds [.sodium] 11 :=
+  ⟨determines_points_on _ trivial, (pointsRule_iff _ _).mpr rfl⟩
 
 private def ten : List Item :=
   [.bun, .uricAcid, .ast, .alt, .totalProtein, .gammaGT, .potassium, .lipase, .copper, .glucose]
