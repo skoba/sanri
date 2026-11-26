@@ -29,10 +29,11 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 ## 論理検証の基盤
 
 - [Logic.lean](./Sanri/Logic.lean)：出典付きの独立制約、解の存在・一意性、仕様間の包含・同値・不一致。単なる制約追加では充足不能を解消できないことも証明します。
-- [外来血液検査の事例](./Sanri/CaseStudies/OutpatientBloodTests.lean)で、血算・生化学8項目の実施料を検査の実施内容から導き、判断料と静脈採血を含む429点の内訳の存在と一意性を証明します。
+- [外来血液検査の事例](./Sanri/CaseStudies/OutpatientBloodTests.lean)で、血算・生化学8項目の実施料を検査の実施内容から導き、判断料と静脈採血を含む内訳が、適格項目・履歴・静脈採血の前提が確定した全入力で一意に決まることを証明します。429点の例を含みます。
 - [残尿測定の事例](./Sanri/CaseStudies/ResidualUrine.lean)：患者合計の月上限と、コード別上限・同日背反の表現差を証明します。公式マスター全体の誤りを証明したものではありません。
 - [届出の疑義解釈の事例](./Sanri/CaseStudies/FilingClarification.lean)：令和8年疑義解釈その1・医科問3を、届出の種類に限定して形式化します。加算全体の算定可否は対象外です。
 - [ローカルCSV照合](./tools/audit_residual_urine.py)：版・ハッシュ・出典行を確認して限定した履歴を照合し、結果をGit管理外へ保存します。使い方は [tensuhyo/README.md](./tensuhyo/README.md) を参照してください。
+- [診療行為マスターの取込](./tools/procedure_master.py)：登録版のハッシュと列を検査し、9桁の診療行為コードを区分・項番で索引化します。本文の区分見出しとの突合せまでを行い、点数や算定条件の一致は別に照合します。
 
 ## 実装範囲
 
@@ -148,7 +149,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 
 ## 公式参照資料
 
-医科電子点数表は、各利用者が提供元から取得して [tensuhyo/](./tensuhyo/README.md) にローカル保存して参照します。原本ZIP・PDF・CSV、変換・正規化データ、公式データの抜粋はGit管理・公開リポジトリの対象外です。取得元・参照用データの版・文字コード・検索方法は同フォルダのREADMEを参照してください。点数等を持つ診療行為マスターは別配布で、現在は未取得です。
+医科電子点数表は、各利用者が提供元から取得して [tensuhyo/](./tensuhyo/README.md) にローカル保存して参照します。原本ZIP・PDF・CSV、変換・正規化データ、公式データの抜粋はGit管理・公開リポジトリの対象外です。取得元・参照用データの版・文字コード・検索方法は同フォルダのREADMEを参照してください。点数等を持つ診療行為マスターは別配布で、同じくローカルに保存して照合に使います。
 
 ## ライセンス
 
