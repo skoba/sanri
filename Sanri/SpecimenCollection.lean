@@ -199,18 +199,61 @@ def assess (c : Context) : Option Assessment :=
 
 def points (c : Context) : Option Nat := (assess c).map Assessment.total
 
-/-- 同一日・同一患者の一覧。Ｄ４００の静脈／その他は日次履歴を共有する。 -/
+def mixedD400 (contexts : List Context) : Bool :=
+  (contexts.any fun c => c.item == .venousBlood) &&
+    (contexts.any fun c => c.item == .otherBlood)
+
+private def sameLimitedFrame (a b : Context) : Bool :=
+  a.item == b.item && (isDaily a.item || (isSeries a.item && a.seriesId == b.seriesId))
+
+private def conflictingCharge (a b : Context) : Bool :=
+  sameLimitedFrame a b &&
+    match assess a, assess b with
+    | some x, some y => x.notSeparate.isNone && y.notSeparate.isNone && x != y
+    | _, _ => false
+
+def conflictingLimitedCharges (contexts : List Context) : Bool :=
+  contexts.any fun a => contexts.any (conflictingCharge a)
+
+/-- 同一日・同一患者の一覧。異方式のＤ４００を含む日の本体点数は保留する。 -/
 def assessDay (contexts : List Context) : Option (List Assessment) := do
-  let result ← contexts.foldlM (fun (state : List Context × List Assessment) original => do
-    let c := { original with
-      dailyAlreadyClaimed := original.dailyAlreadyClaimed || state.1.any (fun x =>
-        (isD400 original.item && isD400 x.item) || decide (x.item = original.item))
-      seriesAlreadyClaimed := original.seriesAlreadyClaimed || state.1.any (fun x =>
-        decide (x.item = original.item ∧ x.seriesId = original.seriesId)) }
-    let a ← assess c
-    let charged := if a.notSeparate.isNone then state.1 ++ [c] else state.1
-    some (charged, state.2 ++ [a])) ([], [])
-  some result.2
+  if mixedD400 contexts then none else
+    if conflictingLimitedCharges contexts then none else
+      let result ← contexts.foldlM (fun (state : List Context × List Assessment) original => do
+          let c := { original with
+            dailyAlreadyClaimed := original.dailyAlreadyClaimed || state.1.any (fun x =>
+              decide (x.item = original.item))
+            seriesAlreadyClaimed := original.seriesAlreadyClaimed || state.1.any (fun x =>
+              decide (x.item = original.item ∧ x.seriesId = original.seriesId)) }
+          let a ← assess c
+          let charged := if a.notSeparate.isNone then state.1 ++ [c] else state.1
+          some (charged, state.2 ++ [a])) ([], [])
+      some result.2
+
+theorem mixedD400_perm {xs ys : List Context} (h : xs.Perm ys) :
+    mixedD400 xs = mixedD400 ys := by
+  unfold mixedD400
+  rw [h.any_eq, h.any_eq]
+
+theorem assessDay_mixed_perm {xs ys : List Context} (h : xs.Perm ys)
+    (mixed : mixedD400 xs = true) : assessDay xs = none ∧ assessDay ys = none := by
+  have mixed' : mixedD400 ys = true := (mixedD400_perm h).symm.trans mixed
+  simp [assessDay, mixed, mixed']
+
+private theorem conflictingLimitedCharges_perm {xs ys : List Context} (h : xs.Perm ys) :
+    conflictingLimitedCharges xs = conflictingLimitedCharges ys := by
+  unfold conflictingLimitedCharges
+  have inner (a : Context) := h.any_eq (f := conflictingCharge a)
+  simp only [inner]
+  exact h.any_eq
+
+
+theorem assessDay_conflicting_perm {xs ys : List Context} (h : xs.Perm ys)
+    (conflict : conflictingLimitedCharges xs = true) :
+    assessDay xs = none ∧ assessDay ys = none := by
+  have conflict' : conflictingLimitedCharges ys = true :=
+    (conflictingLimitedCharges_perm h).symm.trans conflict
+  simp [assessDay, conflict, conflict']
 
 /-- 検査通則の第４節に引き渡す。別算定しない採取を種類数に含めない。
 Ｅ４００のフィルムは第４節の置換対象に混ぜず、呼出元で別に合算する。 -/
@@ -270,8 +313,15 @@ example : points { req .pleuralAsciticFluid with ageYears := 5 } = some 280 := b
 example : points { req .anteriorChamberFluid with ageYears := 5 } = some 594 := by decide
 example : points { req .adrenalVenousSampling with ageYears := 5, filmPoints := 25 } = some 5825 := by decide
 example : points { req .gastricDuodenalFluid with seriesAlreadyClaimed := true } = some 0 := by decide
-example : (assessDay [req .venousBlood, req .otherBlood]).map
-    (fun xs => (xs.map Assessment.total).sum) = some 40 := by decide
+example : assessDay [req .venousBlood, req .otherBlood] = none := by decide
+example :
+    let a := req .arterialBlood
+    let b := { a with ageYears := 5 }
+    assessDay [a, b] = none ∧ assessDay [b, a] = none := by decide
+example :
+    let a := req .adrenalVenousSampling
+    let b := { a with filmPoints := 25 }
+    assessDay [a, b] = none ∧ assessDay [b, a] = none := by decide
 example : ((assess { req .venousBlood with duringSurgery := true }).bind
     (fun a => a.toCollection 400)) = none := by decide
 example : ((assess { req .adrenalVenousSampling with filmPoints := 25 }).bind

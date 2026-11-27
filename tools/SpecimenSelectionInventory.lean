@@ -15,9 +15,11 @@ private def summary : Json := Json.mkObj [
   ("overlaps", toJson (overlaps.map fun (a, b, ids) =>
     ((clauseAt a, clauseAt b), ids.map fun i => indexedItems[i]!))),
   ("components", toJson (components.map (·.map clauseAt))),
-  ("complete", toJson (inventory.countP (·.connection == .complete))),
-  ("partial", toJson (inventory.countP (·.connection == .partiallyConnected))),
-  ("unconnected", toJson (inventory.countP (·.connection == .unconnected))),
+  ("clause_constraints", toJson inventory.length),
+  ("projections", toJson (inventory.countP (·.evidence.projection.isSome))),
+  ("raw_generation", toJson (inventory.countP (·.evidence.rawGeneration))),
+  ("evidence", toJson (inventory.map fun g =>
+    (g.clauseConstraint, g.evidence.unitWording, g.evidence.projection, g.evidence.rawGeneration, g.memberGap))),
   ("unresolved_unit", toJson (inventory.countP (·.unit == .unresolved)))]
 
 #eval IO.println summary.compress

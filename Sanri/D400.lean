@@ -167,7 +167,7 @@ private def mixedMethod (method prior : Method) : Context :=
 private def adultCollection (method : Method) : SpecimenCollection.Context :=
   { item := method.item, ageYears := 40 }
 
-private def sharedTotal (methods : List Method) : Option Nat :=
+private def dayTotal (methods : List Method) : Option Nat :=
   (SpecimenCollection.assessDay (methods.map adultCollection)).map
     (fun charges => (charges.map SpecimenCollection.Assessment.total).sum)
 
@@ -176,10 +176,10 @@ theorem mixed_method_history :
     (assess (mixedMethod .other .venous)).map Result.total = some 6 ∧
       (assess (mixedMethod .venous .other)).map Result.total = some 40 := by decide
 
-/-- 共有枠は順序により40点又は6点となる。各方式単独の日は点数が一致する。 -/
+/-- 異方式の日は両順序で保留し、方式単独の日は従来の点数を返す。 -/
 theorem mixed_shared_frame :
-    sharedTotal [.venous, .other] = some 40 ∧ sharedTotal [.other, .venous] = some 6 ∧
-      sharedTotal [.venous] = some 40 ∧ sharedTotal [.other] = some 6 := by decide
+    dayTotal [.venous, .other] = none ∧ dayTotal [.other, .venous] = none ∧
+      dayTotal [.venous] = some 40 ∧ dayTotal [.other] = some 6 := by decide
 
 /-- 同じ二実施の方式別合計は各順序で46点。前の算定を後の履歴に入れても変わらない。 -/
 theorem mixed_method_total :

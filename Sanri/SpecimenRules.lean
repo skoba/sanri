@@ -274,6 +274,9 @@ def assess (requests : List Request) : Option BatchResult := do
     let billable := requests.filter (fun r => match assessOne r with
       | some (.charged _ _) => true
       | _ => false)
+    -- 同じ実施への異なる点数入力は、先頭を採用せず保留する。
+    if billable.any (fun a => billable.any (fun b =>
+        identity a == identity b && assessOne a != assessOne b)) then none else
     let keys := (billable.map identity).eraseDups
     let unique := keys.filterMap (fun k => billable.find? (fun r => decide (identity r = k)))
     let leaders := unique.foldl (fun acc r =>
@@ -293,6 +296,11 @@ def points (requests : List Request) : Option Nat := do
   match ← assess requests with
   | .calculated groups => some ((groups.map PricedGroup.total).sum)
   | .missingSource _ => none
+
+example :
+    let a : Request := { code := .d017, number := 1 }
+    let b := { a with conditions := { a.conditions with concentrationSmear := true } }
+    points [a, b] = none ∧ points [b, a] = none := by decide
 
 /-- 同一検体でのＤ００２／Ｄ００２－２とＤ０１７を１つの主検査選択で評価する。 -/
 def assessSedimentPair (urine : UrineFecalTests.Context) (bacteria : Request)
