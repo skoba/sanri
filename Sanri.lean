@@ -30,6 +30,8 @@ import Sanri.ComputedTomography
 import Sanri.ImagingDrugsMaterials
 import Sanri.Medication
 import Sanri.Logic
+import Sanri.History
+import Sanri.HistoryConnections
 import Sanri.CaseStudies.ResidualUrine
 import Sanri.CaseStudies.FilingClarification
 import Sanri.CaseStudies.OutpatientBloodTests
