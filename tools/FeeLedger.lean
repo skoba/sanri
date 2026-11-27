@@ -135,7 +135,28 @@ private unsafe def points : MetaM (List Json) := do
       (if price.isSome then "base" else "reference") (item.number.getD 0) 0 price
   let cxcl10 := pointRow "D004" "cxcl10" "reference" 0 0
     (D004.scheduled { item := .cxcl10 })
-  return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10] ++ specimens
+  let methylation := pointRow "D004-3" "dnaMethylation" "base" 0 0 (some D004Methylation.points)
+  let tumor := D004Tumor.ledgerItems.map fun item =>
+    pointRow "D004-2" (reprStr item |>.splitOn "." |>.getLast!) "base"
+      item.number 0 (some item.points)
+  let tumorNotes :=
+    ([2, 3, 4].map fun n => pointRow "D004-2" ("simple/" ++ toString n) "note"
+      1 0 (D004Tumor.simpleBundlePoints n)) ++
+    ([2, 3].map fun n => pointRow "D004-2" ("complex/" ++ toString n) "note"
+      1 0 (D004Tumor.complexBundlePoints n))
+  let coagulation := D006.ledgerItems.map fun item =>
+    pointRow "D006" (reprStr item |>.splitOn "." |>.getLast!) "base"
+      item.number 0 (some item.points)
+  let coagulationNotes :=
+    pointRow "D006" "rapidFibrinogen" "note" 4 0 (some D006.rapidFibrinogenPoints) ::
+      ([3, 5].map fun n => pointRow "D006" ("bundle/" ++ toString n) "note"
+        0 0 (D006.bundlePoints n))
+  let leukemia := pointRow "D006-2" "hematopoieticTumorGene" "base" 0 0
+    (some D006Leukemia.D006_2.points)
+  let bcrAbl := D006Leukemia.D006_3.ledgerItems.map fun i =>
+    pointRow "D006-3" (reprStr i |>.splitOn "." |>.getLast!) "base"
+      i.number 0 (some D006Leukemia.D006_3.points)
+  return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++ tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

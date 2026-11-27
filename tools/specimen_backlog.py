@@ -26,9 +26,8 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
             if block["chapter"] != (1 if code.startswith("A") else 2):
                 continue
             for paragraph in block["paragraphs"]:
-                if paragraph["number"] is None:
-                    continue
-                identifier = f"notice/{code}/paragraph/{paragraph['number']}"
+                number = paragraph["number"] if paragraph["number"] is not None else "unnumbered"
+                identifier = f"notice/{code}/paragraph/{number}"
                 found[identifier] += 1
                 for child in paragraph["children"]:
                     if "id_suffix" in child:
@@ -59,8 +58,8 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
                 paragraph["effective_records"] = effective_paragraph_records(paragraph, notice_pages)
         paragraphs = [p for p in records if p["status"] != "deleted"]
         unmatched_notice = [
-            p for p in paragraphs if p["status"] != "baseline" or p["number"] is None
-            or f"notice/{code}/paragraph/{p['number']}" not in matches
+            p for p in paragraphs if p["status"] != "baseline"
+            or f"notice/{code}/paragraph/{p['number'] if p['number'] is not None else 'unnumbered'}" not in matches
         ]
         unchanged_numbers = {str(p["number"]) for p in paragraphs if p["status"] == "baseline"}
         matched_branches = [key for key in check["matched"] if key.startswith(f"notice/{code}/")

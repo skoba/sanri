@@ -19,6 +19,10 @@ import Sanri.BloodChemistryFurther
 import Sanri.BloodChemistryAdditional
 import Sanri.BloodChemistryLate
 import Sanri.D004
+import Sanri.D004Tumor
+import Sanri.D004Methylation
+import Sanri.D006
+import Sanri.D006Leukemia
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring
