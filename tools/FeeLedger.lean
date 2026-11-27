@@ -127,9 +127,19 @@ private unsafe def points : MetaM (List Json) := do
         else continue -- 同じ項目は further に含まれる。
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
-  let specimens := SpecimenTests.catalog.flatMap fun entry =>
+  let specimens := (SpecimenTests.catalog.filter fun e => e.code != .d009 && e.code != .d010 && e.code != .d011).flatMap fun entry =>
     let code := (reprStr entry.code |>.splitOn "." |>.getLast! |>.toUpper).replace "_" "-"
     entry.variants.map fun item => pointRow code item "base" entry.number entry.branch entry.points
+  let markers := (List.finRange 36).map fun slot =>
+    let item : D009.Item := ⟨slot, 0⟩
+    pointRow "D009" (toString item.number) "base" item.number 0 (some item.base)
+  let markerBundle := [2, 3, 4].map fun n =>
+    pointRow "D009" ("bundle/" ++ toString n) "note" 2 0
+      (some (D009.bundlePoints (List.replicate n ⟨1, 0⟩)))
+  let special := D010.ledgerItems.map fun item =>
+    pointRow "D010" item.path "base" item.number item.branch (some item.rate)
+  let immuneBlood := D011.ledgerItems.map fun item =>
+    pointRow "D011" (toString item.number) "base" item.number item.branch (some item.points)
   let puncture := D004.ledgerItems.map fun item =>
     let price := item.fixedPoints
     pointRow "D004" (reprStr item |>.splitOn "." |>.getLast!)
@@ -225,7 +235,7 @@ private unsafe def points : MetaM (List Json) := do
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
     brca ++ profiling ++ targeted ++ plasmaPanel ++ plasmaBundles ++ lateGenetic ++
-    endocrine ++ endocrineBundle ++ specimens
+    endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

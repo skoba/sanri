@@ -36,6 +36,9 @@ import Sanri.D006Targeted
 import Sanri.D006PlasmaPanel
 import Sanri.D006Late
 import Sanri.D008
+import Sanri.D009
+import Sanri.D010
+import Sanri.D011
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring
