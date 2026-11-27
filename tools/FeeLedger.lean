@@ -201,7 +201,26 @@ private unsafe def points : MetaM (List Json) := do
   let endocrineBundle := [410, 623, 900].map fun p =>
     pointRow "D008" ("bundle" ++ toString p) "note" 0 0 (some p)
   let generalUrine := pointRow "D000" "generalUrine" "base" 0 0 (some D000.points)
-  return [generalUrine] ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
+  let specialUrine ← (← constructors ``UrineFecalTests.UrineSpecial).mapM fun ctor => do
+    if ctor == ``UrineFecalTests.UrineSpecial.other then
+      return pointRow "D001" "other" "reference" 22 0 none
+    let item := mkConst ctor
+    let number ← evalNat ``D001.ItemNumber item
+    let rule ← evalExpr UrineFecalTests.PointRule (mkConst ``UrineFecalTests.PointRule)
+      (mkApp (mkConst ``UrineFecalTests.urineSpecialPointRule) item)
+    return match rule with
+      | .fixed price => pointRow "D001" ctor.getString! "base" number 0 (some price)
+      | .reference .. => pointRow "D001" ctor.getString! "reference" number 0 none
+  let sediment :=
+    [pointRow "D002" "microscopy" "base" 0 0 (some (UrineSediment.Method.points .microscopy)),
+     pointRow "D002" "stainedSpecimen" "note" 3 0 (some UrineSediment.stainPoints),
+     pointRow "D002-2" "flow" "base" 0 0 (some (UrineSediment.Method.points .flow))]
+  let fecal ← (← constructors ``UrineFecalTests.Fecal).mapM fun ctor => do
+    let item := mkConst ctor
+    let number ← evalNat ``D003.itemNumber item
+    let price ← evalNat ``UrineFecalTests.fecalPoints item
+    return pointRow "D003" ctor.getString! "base" number 0 (some price)
+  return [generalUrine] ++ specialUrine ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++

@@ -9,6 +9,9 @@ import Sanri.SpecificDiseaseManagement
 import Sanri.Examinations
 import Sanri.UrineFecalTests
 import Sanri.D000
+import Sanri.D001
+import Sanri.UrineSediment
+import Sanri.D003
 import Sanri.SpecimenRules
 import Sanri.SpecimenTestsChecks
 import Sanri.SpecimenJudgment

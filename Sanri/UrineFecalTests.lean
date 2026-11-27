@@ -142,6 +142,8 @@ structure Context where
   insuranceMedicalInstitution : Bool := true
   testPerformed : Bool := true
   performedInsideInstitution : Bool := false
+  /-- D002通知(4)の診療所委託要件が確認された。 -/
+  microscopyClinicException : Bool := false
   /-- 同じ検体にＤ０１７の対象細菌顕微鏡検査を併施した場合に限る。 -/
   sameSpecimenD017Performed : Bool := false
   mainTest : MainTest := .urineSediment
@@ -166,7 +168,8 @@ inductive Assessment where
 /-- 別区分の準用が未解決の場合は明示し、０点や算定不可と区別する。 -/
 def assess (c : Context) : Option Assessment :=
   if !(c.insuranceMedicalInstitution && c.testPerformed) ||
-      (requiresInHouse c.item && !c.performedInsideInstitution) then none
+      (requiresInHouse c.item && !c.performedInsideInstitution &&
+        !(decide (c.item = .urineSedimentMicroscopy) && c.microscopyClinicException)) then none
   else if isSediment c.item && c.sameSpecimenD017Performed &&
       decide (c.mainTest = .d017BacterialMicroscopy) then some .onlyMainD017
   else
