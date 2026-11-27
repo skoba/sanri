@@ -8,9 +8,9 @@ inductive OrganicAcid where
   | glutathione | lactate | pyruvate | alphaKetoglutarate
   deriving DecidableEq, Repr
 
-/-- 既存の評価器が受け付ける入力の範囲。 -/
+/-- 評価器ごとの対象範囲。 -/
 inductive Scope where
-  | draw | further | additional | glycemic
+  | draw | further | additional | glycemic | late
   deriving DecidableEq, Repr
 
 /-- D007の項目型。添字で評価器に必要な入力範囲を保つ。 -/
@@ -103,6 +103,49 @@ inductive ScopedItem : Scope → Type where
   | surfactantProteinA : ScopedItem .additional
   | galactose : ScopedItem .additional
   | surfactantProteinD : ScopedItem .additional
+  | typeIVCollagen : ScopedItem .late
+  | myoglobinQualitative : ScopedItem .late
+  | myoglobinQuantitative : ScopedItem .late
+  | hFabpQualitative : ScopedItem .late
+  | hFabpQuantitative : ScopedItem .late
+  | zinc : ScopedItem .late
+  | unboundBilirubin : ScopedItem .late
+  | procollagenIII : ScopedItem .late
+  | ace : ScopedItem .late
+  | vitaminB12 : ScopedItem .late
+  | selenium : ScopedItem .late
+  | folate : ScopedItem .late
+  | typeIVCollagen7S : ScopedItem .late
+  | pyruvateKinase : ScopedItem .late
+  | remnantLipoproteinCholesterol : ScopedItem .late
+  | igfbp1Qualitative : ScopedItem .late
+  | hyaluronicAcid : ScopedItem .late
+  | alpIsoenzymesPag : ScopedItem .late
+  | acetaminophen : ScopedItem .late
+  | cardiacMyosinLightChainI : ScopedItem .late
+  | trypsin : ScopedItem .late
+  | mac2 : ScopedItem .late
+  | mdaLdl : ScopedItem .late
+  | autotaxin : ScopedItem .late
+  | ck18f : ScopedItem .late
+  | elfScore : ScopedItem .late
+  | phospholipaseA2 : ScopedItem .late
+  | erythrocyteCoproporphyrin : ScopedItem .late
+  | lipoproteinLipase : ScopedItem .late
+  | hgf : ScopedItem .late
+  | vitaminB2 : ScopedItem .late
+  | vitaminB1 : ScopedItem .late
+  | lrg : ScopedItem .late
+  | erythrocyteProtoporphyrin : ScopedItem .late
+  | procalcitoninQuantitative : ScopedItem .late
+  | procalcitoninSemiquantitative : ScopedItem .late
+  | vitaminC : ScopedItem .late
+  | presepsin : ScopedItem .late
+  | infliximabQualitative : ScopedItem .late
+  | vitaminD125 : ScopedItem .late
+  | vegf : ScopedItem .late
+  | cochlinTomoprotein : ScopedItem .late
+  | fgf23 : ScopedItem .late
   | glycatedAlbumin : ScopedItem .glycemic
   | anhydroglucitol : ScopedItem .glycemic
   deriving DecidableEq, Repr
@@ -151,6 +194,36 @@ def ScopedItem.number : ScopedItem scope → Nat
   | .surfactantProteinA | .galactose => 34
   | .bloodGas => 35
   | .surfactantProteinD => 38
+  | .typeIVCollagen | .myoglobinQualitative | .myoglobinQuantitative | .hFabpQualitative | .hFabpQuantitative => 35
+  | .zinc => 36
+  | .unboundBilirubin => 37
+  | .procollagenIII | .ace | .vitaminB12 => 38
+  | .selenium => 39
+  | .folate => 40
+  | .typeIVCollagen7S => 41
+  | .pyruvateKinase => 42
+  | .remnantLipoproteinCholesterol => 43
+  | .igfbp1Qualitative => 44
+  | .hyaluronicAcid => 45
+  | .alpIsoenzymesPag | .acetaminophen => 46
+  | .cardiacMyosinLightChainI => 47
+  | .trypsin => 48
+  | .mac2 | .mdaLdl | .autotaxin | .ck18f | .elfScore => 49
+  | .phospholipaseA2 => 50
+  | .erythrocyteCoproporphyrin => 51
+  | .lipoproteinLipase => 52
+  | .hgf => 53
+  | .vitaminB2 => 54
+  | .vitaminB1 => 55
+  | .lrg => 56
+  | .erythrocyteProtoporphyrin => 57
+  | .procalcitoninQuantitative | .procalcitoninSemiquantitative => 58
+  | .vitaminC => 59
+  | .presepsin => 60
+  | .infliximabQualitative => 61
+  | .vitaminD125 => 62
+  | .vegf | .cochlinTomoprotein => 63
+  | .fgf23 => 64
 
 def Item.number (item : Item) : Nat := item.2.number
 
@@ -158,7 +231,7 @@ def Item.number (item : Item) : Nat := item.2.number
 def ItemAt (number : Nat) (item : Item) : Prop := item.number = number
 
 theorem modeled_number (item : Item) :
-    (1 ≤ item.number ∧ item.number ≤ 35) ∨ item.number = 38 := by
+    1 ≤ item.number ∧ item.number ≤ 64 := by
   obtain ⟨scope, item⟩ := item
   cases item <;> simp [Item.number, ScopedItem.number]
 
@@ -177,7 +250,17 @@ example : ([
     ⟨.additional, .ferritinSemiquantitative⟩, ⟨.additional, .ethanol⟩, ⟨.additional, .lipoproteinA⟩,
     ⟨.additional, .heparin⟩, ⟨.additional, .troponinI⟩, ⟨.additional, .vitaminD25⟩,
     ⟨.additional, .pentosidine⟩, ⟨.additional, .inulin⟩, ⟨.additional, .lipoproteinHplc⟩,
-    ⟨.additional, .surfactantProteinA⟩, ⟨.further, .bloodGas⟩, ⟨.additional, .surfactantProteinD⟩
-    ] : List Item).map Item.number = List.range' 1 35 ++ [38] := by decide
+    ⟨.additional, .surfactantProteinA⟩, ⟨.further, .bloodGas⟩,
+    ⟨.late, .zinc⟩, ⟨.late, .unboundBilirubin⟩, ⟨.additional, .surfactantProteinD⟩,
+    ⟨.late, .selenium⟩, ⟨.late, .folate⟩, ⟨.late, .typeIVCollagen7S⟩,
+    ⟨.late, .pyruvateKinase⟩, ⟨.late, .remnantLipoproteinCholesterol⟩,
+    ⟨.late, .igfbp1Qualitative⟩, ⟨.late, .hyaluronicAcid⟩, ⟨.late, .acetaminophen⟩,
+    ⟨.late, .cardiacMyosinLightChainI⟩, ⟨.late, .trypsin⟩, ⟨.late, .elfScore⟩,
+    ⟨.late, .phospholipaseA2⟩, ⟨.late, .erythrocyteCoproporphyrin⟩,
+    ⟨.late, .lipoproteinLipase⟩, ⟨.late, .hgf⟩, ⟨.late, .vitaminB2⟩, ⟨.late, .vitaminB1⟩,
+    ⟨.late, .lrg⟩, ⟨.late, .erythrocyteProtoporphyrin⟩, ⟨.late, .procalcitoninQuantitative⟩,
+    ⟨.late, .vitaminC⟩, ⟨.late, .presepsin⟩, ⟨.late, .infliximabQualitative⟩,
+    ⟨.late, .vitaminD125⟩, ⟨.late, .vegf⟩, ⟨.late, .fgf23⟩
+    ] : List Item).map Item.number = List.range' 1 64 := by decide
 
 end Sanri.MedicalFee.D007

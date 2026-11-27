@@ -121,6 +121,8 @@ private unsafe def points : MetaM (List Json) := do
             (mkApp (mkConst ``BloodChemistryFurther.Item.scheduledPoints) item)
         else if scope.isConstOf ``D007.Scope.additional then
           some <$> evalNat ``BloodChemistryAdditional.Item.points item
+        else if scope.isConstOf ``D007.Scope.late then
+          some <$> evalNat ``BloodChemistryLate.Item.points item
         else continue -- 同じ項目は further に含まれる。
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
