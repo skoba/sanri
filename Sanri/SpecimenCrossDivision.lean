@@ -1,6 +1,7 @@
 import Sanri.SpecimenOutpatientDay
 import Sanri.SpecimenJudgmentRouting
 import Sanri.HistoryConnections
+import Sanri.GlycemicTests
 
 namespace Sanri.MedicalFee.SpecimenCrossDivision
 
@@ -248,6 +249,148 @@ def morphologyPair (a b : Performance BloodMorphology.Item)
     | _ => none
   return ⟨a.item, b.item, same, forMalaria, principal⟩
 
+private def selectionNotice (location : String) : SourceRef :=
+  ⟨.notification, "保医発0305第6号・別添1", "2026-10-07訂正後", location,
+    .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
+
+private def jointFluidSource := selectionNotice "PDF334頁 D004(1)"
+private def csfRatioSource := selectionNotice "PDF335頁 D004(13)イ"
+
+/-- D004(1)の併施を確認した二件。一連の回数枠は区分側で別に評価する。 -/
+def jointFluidGroup (joint : Performance D004.Item) (bacteria : D017.Context) :
+    Option ChoiceGroup :=
+  let smear := bacteria.performance
+  if joint.item = .jointFluid && joint.id != smear.id &&
+      joint.site.patient == smear.site.patient && joint.site.institution == smear.site.institution then
+    some ⟨jointFluidSource, [joint.id, smear.id], 1⟩
+  else none
+
+/-- D004(13)イ。併施と確認した記録を使用し、アの成分同時測定とは区別する。 -/
+def csfRatioGroup (anchor : Performance D004.Item) (rows : List (Performance D004.Item)) :
+    Option ChoiceGroup :=
+  let ids := rows.map Performance.id
+  if rows.contains anchor && ids.eraseDups == ids &&
+      ((rows.map Performance.item).eraseDups.length ≥ 2) &&
+      rows.all (fun row =>
+        row.site.patient == anchor.site.patient && row.site.institution == anchor.site.institution &&
+        ([D004.Item.phosphoTau, .amyloidRatio, .phosphoTauAmyloidRatio]).contains row.item) then
+    some ⟨csfRatioSource, ids, 1⟩
+  else none
+
+/-- 実施群の照会が完了した場合にのみ採否を渡す。 -/
+def punctureSelectionInput (row : Performance D004.Item) (c : D004.Context)
+    (choices : Option (List GroupChoice)) : Option D004.Context := do
+  if row.item != c.item then none else
+    let selectedBy (source : SourceRef) :=
+      choices.map fun cs => retained (cs.filter (·.group.source == source)) row.id
+    return { c with jointAloneOrPrincipalAgainstD017 := selectedBy jointFluidSource
+                    aloneOrPrincipalAmongTauRatios := selectedBy csfRatioSource }
+
+private def hematologicTests : List D004Tumor.OtherTest :=
+  [.d004_2_1, .d006_2, .d006_6, .d006_14, .d006_16]
+
+/-- 患者の暦月内の造血器関連の群。D004-2の実施がない月にも適用する。
+同一区分の反復しかない場合の回数制限は各区分で評価する。 -/
+def hematologicMonthlyGroup (site : Site) (institution : Option Nat)
+    (survey : Snapshot (Performance D004Tumor.OtherTest)) : Option (List ChoiceGroup) := do
+  if institution.isSome && institution != some site.institution then none else
+  let rows ← survey.select Performance.site ⟨site.patient, institution, .month site.date.month⟩
+    (fun p => hematologicTests.contains p.item)
+  let ids := rows.map Performance.id
+  if ids.eraseDups != ids then none
+  else if (rows.map Performance.item).eraseDups.length < 2 then some []
+  else some [⟨D004Tumor.hematologicRule.source, ids, 1⟩]
+
+/-- D004-2(7)(8)の相手を、同月の確認範囲から取得する。 -/
+def tumorMonthlyGroups (c : D004Tumor.Context) (institution : Option Nat)
+    (survey : Snapshot (Performance D004Tumor.OtherTest)) : Option (List ChoiceGroup) := do
+  let site := c.performance.site
+  if institution.isSome && institution != some site.institution then none
+  else if c.item.number != 1 then some []
+  else
+    let scope : Scope := ⟨site.patient, institution, .month site.date.month⟩
+    let counterpartGroup (source : SourceRef) (items : List D004Tumor.OtherTest) :
+        Option (List ChoiceGroup) := do
+      let performed ← survey.select Performance.site scope (fun p => items.contains p.item)
+      let ids := c.performance.id :: performed.map Performance.id
+      if ids.eraseDups != ids then none
+      else if performed.isEmpty then some []
+      else some [⟨source, ids, 1⟩]
+    let tumor : Performance D004Tumor.OtherTest := { c.performance with item := .d004_2_1 }
+    let hematologic ← hematologicMonthlyGroup site institution
+      { survey with entries := if survey.entries.contains tumor then survey.entries
+                               else tumor :: survey.entries }
+    let egfr ← if c.item == .drugAid && c.cancer == .lung && c.assay == some .egfr then
+        counterpartGroup D004Tumor.egfrRule.source [.d006_12, .d006_24]
+      else some []
+    return hematologic ++ egfr
+
+/-- 確認済みの月間履歴と共有採否を、D004-2側の照会入力に渡す。 -/
+def tumorMonthlyInput (c : D004Tumor.Context) (institution : Option Nat)
+    (survey : Snapshot (Performance D004Tumor.OtherTest))
+    (choices : List GroupChoice) : D004Tumor.Context :=
+  let principal (_ : D004Tumor.OtherTest) (other : Nat) :=
+    let applicable := choices.filter fun g =>
+      (g.group.source == D004Tumor.hematologicRule.source ||
+        g.group.source == D004Tumor.egfrRule.source) &&
+      g.group.members.contains c.performance.id && g.group.members.contains other
+    if applicable.isEmpty then none else some (retained applicable c.performance.id)
+  { c with monthlySelection := some ⟨survey, institution, principal⟩ }
+
+/-- 自分の実施を相手側の照会から除き、共通の採否を区分の月間入力に渡す。 -/
+def hematologicMonthlyInput (row : Performance D004Tumor.OtherTest)
+    (institution : Option Nat) (survey : Snapshot (Performance D004Tumor.OtherTest))
+    (choices : List GroupChoice) : D004Tumor.MonthlySelection :=
+  let counterparts := survey.entries.filter (·.id != row.id)
+  let principal (item : D004Tumor.OtherTest) (id : Nat) :=
+    if !hematologicTests.contains item then none else
+      let applicable := choices.filter fun g =>
+        g.group.source == D004Tumor.hematologicRule.source &&
+          g.group.members.contains row.id && g.group.members.contains id
+      if applicable.isEmpty then none else some (retained applicable row.id)
+  ⟨{ survey with entries := counterparts }, institution, principal⟩
+
+private def tumorCombination (c : D004Tumor.Context) (kind : D004Tumor.Combination) :
+    Option (SourceRef × List D004Tumor.OtherTest) :=
+  match kind with
+  | .alk =>
+    if c.item == .drugAid && c.cancer == .lung && c.assay == some .alkFusion then
+      some (D004Tumor.alkRule.source, [.d006_24, .n002_6, .n005_2])
+    else none
+  | .her2 =>
+    if c.item == .drugAid && c.cancer == .breast && c.assay == some .her2 then
+      some (D004Tumor.her2Rule.source, [.n005])
+    else none
+  | .brca =>
+    if ([D004Tumor.Cancer.ovarianClearCell, .otherOvarian, .prostate]).contains c.cancer &&
+        ((c.item == .drugAid && c.assay == some .msi) ||
+          (c.item == .complex && c.assay.any ([D004Tumor.Assay.ntrkFusion, .mutationBurden].contains ·))) then
+      some (D004Tumor.brcaRule.source, [.d006_18_1])
+    else none
+
+/-- D004-2(9)〜(11)。相手の併施範囲を確認した一覧を使う。 -/
+def tumorCombinedGroup (c : D004Tumor.Context) (kind : D004Tumor.Combination)
+    (rows : List (Performance D004Tumor.OtherTest)) : Option ChoiceGroup := do
+  let (source, counterparts) ← tumorCombination c kind
+  let members := c.performance.id :: rows.map Performance.id
+  if rows.isEmpty || members.eraseDups != members ||
+      !rows.all (fun p => counterparts.contains p.item &&
+        p.site.patient == c.performance.site.patient) then none
+  else some ⟨source, members, 1⟩
+
+def tumorCombinedInput (c : D004Tumor.Context)
+    (confirmed : D004Tumor.Combination → Option (List (Performance D004Tumor.OtherTest)))
+    (choices : List GroupChoice) : D004Tumor.Context :=
+  { c with combinations := fun kind => do
+      let rows ← confirmed kind
+      if rows.isEmpty then some [] else
+        let group ← tumorCombinedGroup c kind rows
+        let selected := choices.find? fun choice =>
+          choice.group.source == group.source && choice.group.members.isPerm group.members &&
+          choice.group.count == group.count
+        return rows.map fun p =>
+          ⟨p.item, selected.map fun _ => retained choices c.performance.id⟩ }
+
 /-- D005の二件規則を起動する実施群。三件以上を二件群に展開するかは別途確認する。 -/
 def morphologyGroups (a b : Performance BloodMorphology.Item)
     (forMalaria : Bool) : Option (List ChoiceGroup) := do
@@ -300,6 +443,24 @@ def urineSpecialSelectionInput (c : D001.Context) (choices : List GroupChoice) :
     retained (choices.filter fun choice => choice.group.source == source) c.performance.id = true
   { c with renalSimultaneousSelection := selectedBy D001.renalRule.source
            lfabpNgalSelection := selectedBy D001.lfabpNgalRule.source }
+
+/-- D003(4)ウ。同じ目的のD313を収録した実施履歴を照会する。 -/
+def colonoscopyGroup (stool : D003.Context) (institution : Option Nat)
+    (survey : Snapshot (Performance Unit)) : Option (List ChoiceGroup) := do
+  let test := stool.performance
+  if test.item != .calprotectin then some []
+  else if stool.purpose.isNone || (institution.isSome && institution != some test.site.institution) then none
+  else
+    let exams ← survey.select Performance.site
+      ⟨test.site.patient, institution, .month test.site.date.month⟩ (fun _ => true)
+    let members := test.id :: exams.map Performance.id
+    if members.eraseDups != members then none
+    else if exams.isEmpty then some []
+    else some [⟨D003.colonoscopyRule.source, members, 1⟩]
+
+def colonoscopyInput (choices : List GroupChoice) (stool : D003.Context) : D003.Context :=
+  let applicable := choices.filter (·.group.source == D003.colonoscopyRule.source)
+  { stool with colonoscopyMonthlySelection := retained applicable stool.performance.id = true }
 
 /-- D002(5)・D002-2(2)。併施の適用範囲を確認した鏡検法とフロー法を受ける。 -/
 def sedimentMethodGroup (microscopy flow : UrineSediment.Context) : Option ChoiceGroup :=
@@ -366,6 +527,27 @@ theorem coagulationMarkerInput_projects (c : D006.Context)
     (coagulationMarkerInput c survey ⟨group, [id]⟩).principalPerformance =
       some c.performance.id ↔ retained [⟨group, [id]⟩] c.performance.id = true := by
   simp [coagulationMarkerInput, retained, member, eq_comm]
+/-- D006-15(3)。対象のN004項2を、日付でなく同時実施IDで照合する。 -/
+def bladderCytologyGroup (test : Performance D006Oncology.Bladder.Related)
+    (cytology : List (Performance D006Oncology.Bladder.Related)) : Option (List ChoiceGroup) := do
+  if test.item != .bladderGeneTest || cytology.any (·.item != .cytology) then none else
+    let simultaneous ← cytology.filterM test.simultaneousWith
+    let ids := test.id :: simultaneous.map Performance.id
+    if ids.eraseDups != ids then none
+    else if simultaneous.isEmpty then some []
+    else some [⟨D006Oncology.Bladder.combinationRule.source, ids, 1⟩]
+
+def bladderCytologyInput (c : D006Oncology.Bladder.Context)
+    (cytology : List (Performance D006Oncology.Bladder.Related))
+    (choices : List GroupChoice) : Option D006Oncology.Bladder.Context := do
+  let _ ← bladderCytologyGroup c.performance cytology
+  let simultaneous ← cytology.filterM c.performance.simultaneousWith
+  let selected (id : Nat) :=
+    let applicable := choices.filter fun g =>
+      g.group.source == D006Oncology.Bladder.combinationRule.source &&
+      g.group.members.contains c.performance.id && g.group.members.contains id
+    if applicable.isEmpty then none else some (retained applicable c.performance.id)
+  return { c with simultaneousCytology := some simultaneous, principalOverCytology := selected }
 
 /-- D001(4)イ。併施を確認したD007・D009の膵関連実施を一群にまとめる。 -/
 def pancreaticGroup (urine : D001.Context) (chemistry : List (Performance D007.Item))
@@ -400,6 +582,65 @@ theorem pancreaticChoice_projects (urine : D001.Context) (marker : D009.Context)
         marker.pancreaticSelection) := by
   obtain ⟨_, _, _, _, _, hu, hm⟩ := h
   simp [retained, pancreaticChoice, hu, hm, eq_comm]
+
+inductive ChemistryCombination where
+  | calcium | ironBinding | cholesterol | protein
+
+/-- D007(2)(3)(5)(7)。適格性と併測を確認した一採血の候補を受ける。
+同時を明記する二条項では同時実施IDも照合する。 -/
+def chemistryCombinationGroup (kind : ChemistryCombination)
+    (rows : List (Performance BloodChemistry.Item)) : Option ChoiceGroup := do
+  let (source, items, count, simultaneous) := match kind with
+    | .calcium => (BloodChemistry.calciumRule.source, BloodChemistry.calciumGroup, 1, true)
+    | .ironBinding => (BloodChemistry.ironBindingRule.source, BloodChemistry.ironBindingGroup, 1, true)
+    | .cholesterol => (BloodChemistry.cholesterolRule.source, BloodChemistry.cholesterolGroup, 2, false)
+    | .protein => (BloodChemistry.proteinRule.source, BloodChemistry.proteinGroup, 2, false)
+  let anchor :: rest := rows | none
+  let ids := rows.map Performance.id
+  if ids.eraseDups != ids || !(rows.map Performance.item).isPerm items ||
+      !rest.all (fun row => anchor.site == row.site && anchor.sameDraw row == some true &&
+        (!simultaneous || anchor.simultaneousWith row == some true)) then none
+  else some ⟨source, ids, count⟩
+
+/-- D007(9)(12)は残す側を明記する。ケトン体は確認済みの併施を受け、
+重炭酸塩と血液ガスでは同一検体の条件も使う。 -/
+def chemistryPriorityGroup (first second : Performance BloodChemistryFurther.Item) :
+    Option GroupChoice := do
+  if first.id = second.id || first.site.patient != second.site.patient ||
+      first.site.institution != second.site.institution then none else
+    let pair ← match first.item, second.item with
+      | .ketoneBodies, .ketoneFractions => some BloodChemistryFurther.Pair.ketones
+      | .bicarbonate, .bloodGas =>
+        if first.sameSpecimen second = some true then some .bicarbonateAndBloodGas else none
+      | _, _ => none
+    return ⟨⟨pair.rule.source, [first.id, second.id], 1⟩, [second.id]⟩
+
+/-- D005(9)・D007(14)の三検査の実施履歴。同一患者・機関の暦月を照会する。 -/
+def glycemicMonth (site : Site) (survey : Snapshot (Performance GlycemicTests.Item))
+    (exception : Option GlycemicTests.Exception) : Option GlycemicTests.Month := do
+  let rows ← survey.select Performance.site site.monthScope (fun _ => true)
+  return ⟨rows.map fun row => ⟨row.id, row.item⟩, exception⟩
+
+/-- 方法と追加枠を区分側で評価し、解決した算定案を共有選択へ渡す。 -/
+def glycemicChoice (month : GlycemicTests.Month) (selection : GlycemicTests.Selection) :
+    Option GroupChoice :=
+  match GlycemicTests.assess (some month) selection with
+  | .resolved principal extra =>
+    let ids := principal.id :: (extra.toList.map GlycemicTests.Performance.id)
+    some ⟨⟨GlycemicTests.additionalRule.source, month.performed.map GlycemicTests.Performance.id,
+      ids.length⟩, ids⟩
+  | _ => none
+
+/-- 月間評価から当日のD007項目だけを取り出し、元の採血IDを保持する。 -/
+def glycemicChemistryDay (site : Site) (survey : Snapshot (Performance GlycemicTests.Item))
+    (exception : Option GlycemicTests.Exception) (selection : GlycemicTests.Selection) :
+    Option (List (Performance D007.Item)) := do
+  let month ← glycemicMonth site survey exception
+  let choice ← glycemicChoice month selection
+  return survey.entries.filterMap fun row => do
+    if row.site != site || !choice.selected.contains row.id then none else
+      let item ← row.item.toD007
+      return { row with item }
 
 /-- 各通知の関係を照合した履歴を受け、採否だけを共通選択から射影する。 -/
 def endocrineSurvey (choices : List GroupChoice)
@@ -470,6 +711,10 @@ theorem geneticTumorDraw_points (g : D004Tumor.Group) (p : D004Tumor.GroupResult
     Satisfies D004Tumor.groupRules g p ↔ g.Valid ∧ p = D004Tumor.groupPoints g :=
   D004Tumor.group_satisfies_iff _ _
 
+def geneticTumorCharge (g : D004Tumor.Group) (valid : g.Valid) : Charge :=
+  Charge.fromProjection D004Tumor.groupRules g
+    (D004Tumor.group_determines g valid) (·.total)
+
 def coagulationDraw (anchor : Performance D006.Item) (rows : List D006.Context) :
     Option D006.DrawGroup :=
   (contextBundleMembers ⟨6, 0, .draw⟩ anchor D006.Context.performance rows).map (⟨anchor, ·⟩)
@@ -502,6 +747,16 @@ theorem plasmaPanelBundle_points (xs : List D006PlasmaPanel.Assessed)
     (p : D006PlasmaPanel.DrawPoints) :
     Satisfies D006PlasmaPanel.bundleRules xs p ↔ p = D006PlasmaPanel.bundlePoints xs :=
   D006PlasmaPanel.bundle_iff _ _
+
+/-- D006-27注1・2の一採血評価を日次の実施料へ渡す。 -/
+def plasmaPanelCharge (d : D006PlasmaPanel.Draw) (eligible : ∃ xs, d.Assesses xs) : Charge := by
+  obtain ⟨existsPoints, uniquePoints⟩ := D006PlasmaPanel.determines_assessed_draw d eligible
+  refine ⟨fun total => ∃ p, (∃ xs, d.Assesses xs ∧
+    Satisfies D006PlasmaPanel.bundleRules xs p) ∧ p.total = total, ?_⟩
+  obtain ⟨p, hp⟩ := existsPoints
+  refine ⟨p.total, ⟨p, hp, rfl⟩, ?_⟩
+  rintro _ ⟨q, hq, rfl⟩
+  exact congrArg D006PlasmaPanel.DrawPoints.total (uniquePoints _ _ hq hp)
 
 /-- D007へ準用する尿・穿刺液と、それぞれの採血由来の項目を分ける。 -/
 def chemistryDrawWithReferences (site : Site) (draw : Nat) (firstDraw : Option Nat)
@@ -611,6 +866,30 @@ theorem d000_not_judgment_candidate (row : DayTest)
     row.resolvedJudgmentCandidate = some false := by
   simp [DayTest.resolvedJudgmentCandidate, test, D000.judgmentTest]
 
+private def assessedChemistryItems (row : Performance BloodChemistry.Item)
+    (rows : List (Performance BloodChemistry.Item)) (choices : List GroupChoice)
+    (context : BloodChemistry.Draw) : Option (List BloodChemistry.Item) := do
+  let draw ← row.draw
+  if !rows.contains row || !retained choices row.id then none else
+    let assessed ← chemistryDraw choices rows row.site draw context
+    let items ← BloodChemistry.billableItems assessed
+    if assessed.eligible row.item == some true && items.contains row.item.billingItem then
+      some items
+    else none
+
+/-- 選択・適格性・項目数の評価を通過したD007の実施を判断料候補へ渡す。
+除外された実施のD026候補性には、ここでは確定値を与えない。 -/
+def chemistryJudgmentCandidate (row : Performance BloodChemistry.Item)
+    (rows : List (Performance BloodChemistry.Item)) (choices : List GroupChoice)
+    (context : BloodChemistry.Draw) : Option Bool :=
+  (assessedChemistryItems row rows choices context).map fun _ => true
+
+def chemistryJudgmentRule :
+    Rule (Performance BloodChemistry.Item × List (Performance BloodChemistry.Item) ×
+      List GroupChoice × BloodChemistry.Draw) (Option Bool) :=
+  ⟨"notice/D026/paragraph/1", selectionNotice "PDF402頁 D026(1)", fun (row, rows, choices, context) out =>
+    out = chemistryJudgmentCandidate row rows choices context⟩
+
 def judgmentFromDay (day : SpecimenJudgment.DailyJudgment)
     (rows : List DayTest) : Option SpecimenJudgment.DailyJudgment := do
   let candidates ← rows.filterM DayTest.resolvedJudgmentCandidate
@@ -647,6 +926,13 @@ inductive RapidCountBasis where
 def RapidCountBasis.counts : RapidCountBasis → Option Bool
   | .individual | .bundled _ | .outpatientConsultation => some true
   | .other confirmed => confirmed
+
+/-- D007注の包括を使う場合は迅速加算通知(2)、個別点数の場合は同(1)の項目候補とする。 -/
+def chemistryRapidCountBasis (row : Performance BloodChemistry.Item)
+    (rows : List (Performance BloodChemistry.Item)) (choices : List GroupChoice)
+    (context : BloodChemistry.Draw) : Option RapidCountBasis :=
+  (assessedChemistryItems row rows choices context).map fun items =>
+    if 5 ≤ items.length then .bundled .chemistry else .individual
 
 def rapidTestsFromAssessment
     (rows : List (SpecimenOutpatientDay.RapidTest × RapidCountBasis)) :
@@ -702,6 +988,103 @@ def collectionCharge (c : SpecimenCollection.Context)
     exact ⟨p, hp, fun _ hq => Option.some.inj (hq.symm.trans hp)⟩⟩
 
 private def sampleSite : Site := ⟨1, 2, ⟨⟨2026, 10⟩, ⟨22, by decide⟩⟩⟩
+
+private def stoolSample : D003.Context :=
+  { performance := { id := 11, site := sampleSite, item := .calprotectin }
+    d017BacteriaOrProtozoa := some false
+    purpose := some .diagnosis }
+
+private def colonoscopySurvey : Snapshot (Performance Unit) :=
+  ⟨sampleSite.monthScope, [{ id := 12, site := sampleSite, item := () }]⟩
+
+example : (colonoscopyGroup stoolSample (some sampleSite.institution) colonoscopySurvey).map
+    (List.map ChoiceGroup.members) = some [[11, 12]] := by decide
+
+example : colonoscopyGroup stoolSample none colonoscopySurvey = none := by decide
+
+private def tauSample : Performance D004.Item := { id := 11, site := sampleSite, item := .phosphoTau }
+private def amyloidSample : Performance D004.Item := { id := 12, site := sampleSite, item := .amyloidRatio }
+
+example :
+    (csfRatioGroup tauSample [tauSample, amyloidSample]).map ChoiceGroup.members =
+      some [11, 12] := by decide
+
+example :
+    (punctureSelectionInput tauSample { item := .phosphoTau } none).bind
+      (·.aloneOrPrincipalAmongTauRatios) = none := rfl
+
+example :
+    (do
+      let group ← csfRatioGroup tauSample [tauSample, amyloidSample]
+      let projected ← punctureSelectionInput amyloidSample { item := .amyloidRatio }
+        (some [⟨group, [tauSample.id]⟩])
+      projected.aloneOrPrincipalAmongTauRatios) = some false := by decide
+
+private def tumorSample : D004Tumor.Context :=
+  { performance := { id := 11, site := sampleSite, item := .drugAid }, cancer := .lung, assay := some .egfr }
+
+private def geneSurvey : Snapshot (Performance D004Tumor.OtherTest) :=
+  ⟨sampleSite.monthScope, [{ id := 12, site := sampleSite, item := .d006_12 }]⟩
+
+example : (tumorMonthlyGroups tumorSample (some sampleSite.institution) geneSurvey).map
+    (List.map ChoiceGroup.members) = some [[11, 12]] := by decide
+
+example : tumorMonthlyGroups tumorSample none geneSurvey = none := by decide
+
+private def hematologicSample : Snapshot (Performance D004Tumor.OtherTest) :=
+  ⟨sampleSite.monthScope, [{ id := 21, site := sampleSite, item := .d006_2 },
+    { id := 22, site := sampleSite, item := .d006_6 },
+    { id := 23, site := sampleSite, item := .d006_16 }]⟩
+
+example : (hematologicMonthlyGroup sampleSite (some sampleSite.institution)
+    hematologicSample).map (List.map ChoiceGroup.members) = some [[21, 22, 23]] := by decide
+
+private def bladderSample : Performance D006Oncology.Bladder.Related :=
+  { id := 31, site := sampleSite, item := .bladderGeneTest, simultaneous := some 9 }
+
+private def cytologySample : Performance D006Oncology.Bladder.Related :=
+  { id := 32, site := sampleSite, item := .cytology, simultaneous := some 9 }
+
+example : (bladderCytologyGroup bladderSample [cytologySample]).map
+    (List.map ChoiceGroup.members) = some [[31, 32]] := by decide
+
+example : bladderCytologyGroup bladderSample [{ cytologySample with simultaneous := none }] =
+    none := by decide
+
+private def calciumSample : Performance BloodChemistry.Item :=
+  { id := 51, site := sampleSite, item := .calcium, draw := some 7, simultaneous := some 9 }
+
+private def ionizedSample : Performance BloodChemistry.Item :=
+  { id := 52, site := sampleSite, item := .ionizedCalcium, draw := some 7, simultaneous := some 9 }
+
+example : (do
+    let group ← chemistryCombinationGroup .calcium [calciumSample, ionizedSample]
+    let draw ← chemistryDraw [⟨group, [51]⟩] [calciumSample, ionizedSample] sampleSite 7
+      { performed := [] }
+    BloodChemistry.points draw) = some 11 := by decide
+
+example : (do
+    let group ← chemistryCombinationGroup .calcium [calciumSample, ionizedSample]
+    chemistryJudgmentCandidate calciumSample [calciumSample, ionizedSample] [⟨group, [51]⟩]
+      { performed := [] }) = some true := by decide
+
+example : (do
+    let group ← chemistryCombinationGroup .calcium [calciumSample, ionizedSample]
+    chemistryJudgmentCandidate ionizedSample [calciumSample, ionizedSample] [⟨group, [51]⟩]
+      { performed := [] }) = none := by decide
+
+example : chemistryCombinationGroup .calcium
+    [calciumSample, { ionizedSample with simultaneous := none }] = none := by decide
+
+private def glycemicSample : Snapshot (Performance GlycemicTests.Item) :=
+  ⟨sampleSite.monthScope, [{ id := 41, site := sampleSite, item := .a1c },
+    { id := 42, site := sampleSite, item := .anhydroglucitol, draw := some 7 }]⟩
+
+example : (glycemicChemistryDay sampleSite glycemicSample (some .clinical) ⟨41, some 42⟩).map
+    (List.map Performance.draw) = some [some 7] := by decide
+
+example : glycemicChemistryDay sampleSite glycemicSample (some .both) ⟨41, some 42⟩ =
+    none := by decide
 
 private def differentialGroup : ChoiceGroup :=
   ⟨BloodMorphology.eosinophilRule.source, [1, 2], 1⟩

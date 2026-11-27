@@ -90,10 +90,10 @@ def Combination.apply (choice : Combination) (group items : List Item) : Option 
   let excluded ← choice.excluded
   if group.contains excluded then return items.filter (· != excluded) else none
 
-private def calciumGroup : List Item := [.calcium, .ionizedCalcium]
-private def ironBindingGroup : List Item := [.uibcColorimetric, .tibcColorimetric]
-private def cholesterolGroup : List Item := [.hdlCholesterol, .totalCholesterol, .ldlCholesterol]
-private def proteinGroup : List Item := [.proteinFractionation, .totalProtein, .albumin]
+def calciumGroup : List Item := [.calcium, .ionizedCalcium]
+def ironBindingGroup : List Item := [.uibcColorimetric, .tibcColorimetric]
+def cholesterolGroup : List Item := [.hdlCholesterol, .totalCholesterol, .ldlCholesterol]
+def proteinGroup : List Item := [.proteinFractionation, .totalProtein, .albumin]
 
 /-- 組合せが既知の一採血。none は情報不足、未対応の反復、又は不適切な選択。 -/
 def billableItems (c : Draw) : Option (List Item) := do
