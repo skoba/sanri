@@ -18,6 +18,7 @@ import Sanri.GlycemicTests
 import Sanri.BloodChemistryFurther
 import Sanri.BloodChemistryAdditional
 import Sanri.BloodChemistryLate
+import Sanri.D004
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring

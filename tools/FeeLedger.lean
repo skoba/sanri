@@ -129,7 +129,13 @@ private unsafe def points : MetaM (List Json) := do
   let specimens := SpecimenTests.catalog.flatMap fun entry =>
     let code := (reprStr entry.code |>.splitOn "." |>.getLast! |>.toUpper).replace "_" "-"
     entry.variants.map fun item => pointRow code item "base" entry.number entry.branch entry.points
-  return blood.flatten ++ chemistry.reverse ++ specimens
+  let puncture := D004.ledgerItems.map fun item =>
+    let price := item.fixedPoints
+    pointRow "D004" (reprStr item |>.splitOn "." |>.getLast!)
+      (if price.isSome then "base" else "reference") (item.number.getD 0) 0 price
+  let cxcl10 := pointRow "D004" "cxcl10" "reference" 0 0
+    (D004.scheduled { item := .cxcl10 })
+  return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10] ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do
