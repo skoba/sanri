@@ -80,6 +80,8 @@ private unsafe def rules : MetaM (Array Json) := do
     rows := rows ++ found.toArray
   return rows
 
+deriving instance Repr for D011.Item
+
 private def pointRow (division item kind : String) (number branch : Nat)
     (points : Option Nat) : Json :=
   Json.mkObj [("division", toJson division), ("item", toJson item), ("kind", toJson kind),
@@ -148,7 +150,8 @@ private unsafe def points : MetaM (List Json) := do
   let special := D010.ledgerItems.map fun item =>
     pointRow "D010" item.path "base" item.number item.branch (some item.rate)
   let immuneBlood := D011.ledgerItems.map fun item =>
-    pointRow "D011" (toString item.number) "base" item.number item.branch (some item.points)
+    pointRow "D011" (reprStr item |>.splitOn "." |>.getLast!) "base" item.number item.branch
+      (some item.points)
   let infection := D012.ledgerItems.map fun item =>
     pointRow "D012" (reprStr item) "base" item.number 0 (some item.points)
   let infectionCap := pointRow "D012" "viralCap" "note" 11 0

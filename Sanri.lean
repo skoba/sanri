@@ -92,5 +92,6 @@ import Sanri.CaseStudies.ResidualUrine
 import Sanri.CaseStudies.GlycemicTables
 import Sanri.CaseStudies.PunctureAgeTables
 import Sanri.CaseStudies.RenalTestFrequency
+import Sanri.CaseStudies.SpecimenPairwiseTables
 import Sanri.CaseStudies.FilingClarification
 import Sanri.CaseStudies.OutpatientBloodTests

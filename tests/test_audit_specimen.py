@@ -6,9 +6,11 @@ import unittest
 from test_procedure_master import synthetic
 from tools.audit_specimen import (
     collection_inclusion, compare_count_attributes, compare_tables, correspondence, exclusion_key,
-    pack_inclusion, relation_scope, table_rows, grade, MATCH, REPRESENTATION, UNKNOWN,
+    pack_inclusion, pair_coverage, reference_candidates, reference_rate_projection, relation_scope, reviewed_point,
+    table_rows, grade, MATCH, REPRESENTATION, UNKNOWN, UNMODELED,
 )
 from tools.procedure_master import parse_row
+from tools.specimen_audit_groups import BUNDLE_IDS, SELECTION_IDS, choice_review
 
 
 class SpecimenAuditTests(unittest.TestCase):
@@ -55,15 +57,56 @@ class SpecimenAuditTests(unittest.TestCase):
         self.assertIsNone(collection_inclusion(parent, location, {**row, "special": True}))
         self.assertIsNone(collection_inclusion(parent, location, {**row, "unit": "1"}))
 
-    def test_master_count_projection_leaves_error_handling_open(self):
+    def test_master_count_projection_excludes_claim_handling(self):
         record = replace(parse_row(synthetic()), max_count=1)
         attributes = {field: grade(UNKNOWN, "合成例") for field in ("max_count", "max_count_handling")}
         frequency = {"codes": ["a"], "limit": 1, "classification": MATCH,
                      "clauses": ["test"], "rows": [{"line": 2}]}
         compare_count_attributes({"a": {"attributes": attributes}}, [frequency], {"a": record})
         self.assertEqual(attributes["max_count"]["classification"], REPRESENTATION)
-        self.assertEqual(attributes["max_count_handling"]["classification"], UNKNOWN)
+        self.assertEqual(attributes["max_count_handling"]["classification"], UNMODELED)
+        self.assertEqual(attributes["max_count_handling"]["value"], record.max_count_handling)
         self.assertEqual(attributes["max_count"]["frequency_lines"], [2])
+
+    def test_review_distinguishes_equal_price_branches(self):
+        points = [{"item": "x", "branch": i, "points": 12} for i in (1, 2)]
+        self.assertIsNone(reviewed_point(points, "x", 12))
+        self.assertEqual(reviewed_point(points, {"item": "x", "branch": 2}, 12), points[1])
+        self.assertIsNone(reviewed_point(points, {"item": "x", "branch": 2}, 13))
+
+    def test_reference_candidates_include_cross_division_notice(self):
+        record = replace(parse_row(synthetic()), ref_alpha="D", ref_number="901", ref_item=1)
+        blocks = {("D902", 1): [(12, 12, "D901の「1」の所定点数により算定する。")],
+                  ("D903", 1): [(13, 13, "D901の「1」の所定点数により算定する。")]}
+        candidates = reference_candidates(record, blocks, {"D901", "D902"})
+        self.assertEqual([e["clause"] for e in candidates], ["notice/D902/paragraph/1"])
+
+    def test_reference_rate_does_not_map_the_originating_performance(self):
+        record = replace(parse_row(synthetic()), ref_alpha="D", ref_number="901",
+                         ref_chapter=2, ref_part=3, ref_item=2)
+        point = {"item": "rate", "number": 1, "points": 12}
+        by_key = {("D901", 1, "base"): [point]}
+        evidence = {"reference_rate": {"division": "D901", "master_item": 2,
+                                       "number": 1, "item": "rate"}}
+        projection = reference_rate_projection(record, by_key, evidence)
+        self.assertEqual(projection["item_status"], "項番差・由来未確定")
+        self.assertIsNone(reference_rate_projection(replace(record, ref_part=4), by_key, evidence))
+        self.assertIsNone(correspondence(record, by_key)[0])
+
+    def test_pair_coverage_requires_all_cross_code_pairs_and_matching_scope(self):
+        observed = [{"codes": ["a", "c"], "same_projection": True, "table": "exclusion_simultaneous",
+                     "direction": "3", "special": False},
+                    {"codes": ["b", "c"], "same_projection": False, "table": "exclusion_simultaneous",
+                     "direction": "1", "special": False}]
+        coverage = pair_coverage({"a", "b"}, {"c"}, observed)
+        self.assertEqual(coverage, {"status": "一部のみ", "expected": 2, "matching": 1})
+        pair = {"mapping_sizes": [2, 1], "electronic_rows": observed,
+                "reason_type": "単位違い", "coverage": coverage}
+        self.assertEqual(choice_review([pair], False)["status"], "一部のみ")
+        self.assertEqual(pair_coverage(set(), {"c"}, observed)["status"], "コード未対応")
+        self.assertEqual(pair_coverage({"c"}, {"c"}, [])["status"], "同一コードへ縮約")
+        self.assertEqual(len(set(SELECTION_IDS)), 89)
+        self.assertEqual(len(set(BUNDLE_IDS)), 22)
 
     def test_master_layout_addition_fields(self):
         record = parse_row(synthetic(cells={38: "6033", 39: "B", 72: "42", 81: "448",

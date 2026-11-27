@@ -204,3 +204,129 @@ D001(4)イ、(9)イとD002(5)・D002-2(2)の併施は、原文から単位が決
 | 採取入力の処置・手術との関係、日次・一連履歴 | 既存採取評価が使う条件。相手行為の記録からの全件射影が残る |
 
 `overlappingGroups` は与えられた群の全対の共有IDを返す。`consistentSelections` は有限の実施IDの全採否を調べ、各群の件数と指定された算定・除外を検査する。条件を満たす任意の採否を、列挙結果が対象実施IDに制限した形で含むことを証明した。尿沈渣二方式・D017の三つの二件群では重複3対、解0件。各一群を取り除いた三つの部分集合には解がある。これは三件への適用の解釈未確定例。D009の四実施・三群では重複3対で、phiを算定する1通りが解。同一IDを必須と除外の双方へ入れた合成例も充足不能。全89種の組合せの探索は、各群の適用範囲と相手側の実施IDを統一した一覧が未完成のため残る。[Leanの定理と例](../Sanri/SpecimenCrossDivision.lean)
+
+
+## 外部照合の群別判定（工程3a-5c）
+
+基準診療日2026-10-22。接続・部分接続の棚卸しを主条項で識別した。全対一致は対応した項目対のコードの直積で、同じ方向・単位の通常背反を確認した範囲を指す。適用条件の充足や同じ検査の反復の扱いは別途確認する。包括の所属はマスターの所属欄、包括額は告示注の点数の射影である。電子表での関係が未同定の場合は非収載と判断しない。対応コード数・関係の行位置はローカル報告に保持する。[検証状況](validation-status.md#検体検査の外部照合工程3a-5)
+
+### 選択群
+
+| 群ID | 区分 | 判定 | 理由の型 |
+| --- | --- | --- | --- |
+| `notice/D001/paragraph/3` | D001 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D001/paragraph/4/i` | D001 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D001/paragraph/6/i` | D001 | 未判定 | 表での表現が不明 |
+| `notice/D001/paragraph/9/i` | D001 | 未判定 | 特例・適用単位未確認 |
+| `notice/D002/paragraph/5` | D002 | 未判定 | 特例・適用単位未確認 |
+| `notice/D003/paragraph/4/u` | D003 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D004/paragraph/1` | D004 | 未判定 | 特例・適用単位未確認 |
+| `notice/D004/paragraph/13/i` | D004 | 未判定 | 特例・適用単位未確認 |
+| `notice/D004-2/paragraph/7` | D004-2 | 一部のみ | 一致対あり・他の対又は適用範囲が残る |
+| `notice/D004-2/paragraph/8` | D004-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D004-2/paragraph/9` | D004-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D004-2/paragraph/10` | D004-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D004-2/paragraph/11` | D004-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D005/paragraph/3` | D005 | 表現の差 | 単位違い |
+| `notice/D005/paragraph/7` | D005 | 未判定 | 特例・適用単位未確認 |
+| `notice/D005/paragraph/9` | D005 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D006/paragraph/8/i` | D006 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D006-15/paragraph/3` | D006-15 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D006-22/paragraph/3` | D006-22 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D006-24/paragraph/2` | D006-24 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/2` | D007 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D007/paragraph/3` | D007 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D007/paragraph/5` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/7` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/9` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/12` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/15` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/17/e` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/18` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/21` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/22` | D007 | 未判定 | コード未対応 |
+| `notice/D007/paragraph/23/i` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/26` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/27` | D007 | 未判定 | 特例・適用単位未確認 |
+| `notice/D007/paragraph/30` | D007 | 未判定 | 特例・適用単位未確認 |
+| `notice/D007/paragraph/38` | D007 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D007/paragraph/40/i` | D007 | 未判定 | 特例・適用単位未確認 |
+| `notice/D007/paragraph/41/i` | D007 | 未判定 | 特例・適用単位未確認 |
+| `notice/D007/paragraph/42/i` | D007 | 未判定 | 特例・適用単位未確認 |
+| `notice/D007/paragraph/43/u` | D007 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/3` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/4` | D008 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D008/paragraph/6/i` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/7/i` | D008 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D008/paragraph/13` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/15` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/16` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/18` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/19` | D008 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D008/paragraph/25` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D008/paragraph/26/i` | D008 | 未判定 | 特例・適用単位未確認 |
+| `notice/D009/paragraph/3` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/5` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/8` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/10/i` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/15` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/20/u` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/21/u` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/21/e` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D009/paragraph/24/i` | D009 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D011/paragraph/4/u` | D011 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D012/paragraph/2` | D012 | 未判定 | 特例・適用単位未確認 |
+| `notice/D012/paragraph/4` | D012 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D012/paragraph/23` | D012 | 未判定 | 特例・適用単位未確認 |
+| `notice/D012/paragraph/28` | D012 | 未判定 | 特例・適用単位未確認 |
+| `notice/D012/paragraph/31/i` | D012 | 未判定 | 特例・適用単位未確認 |
+| `notice/D012/paragraph/38/i` | D012 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D012/paragraph/43/i` | D012 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D012/paragraph/48/e` | D012 | 未判定 | 特例・適用単位未確認 |
+| `notice/D012/paragraph/56` | D012 | 未判定 | 特例・適用単位未確認 |
+| `notice/D013/paragraph/5` | D013 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D013/paragraph/6` | D013 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D013/paragraph/8` | D013 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D014/paragraph/8` | D014 | 全対一致 | 同じ方向・単位の背反 |
+| `notice/D014/paragraph/12` | D014 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D015/paragraph/4/i` | D015 | 一部のみ | 同一検体かつ同時に限定した一対 |
+| `notice/D015/paragraph/11/i` | D015 | 一部のみ | 一致対あり・他の対又は適用範囲が残る |
+| `notice/D018/paragraph/1/u` | D018 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D018/paragraph/1/e` | D018 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023/paragraph/16/u` | D023 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023/paragraph/36/i` | D023 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023/paragraph/37/u` | D023 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023/paragraph/37/e` | D023 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023/paragraph/39/i` | D023 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023-2/paragraph/1/i` | D023-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D023-2/paragraph/4/i` | D023-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D006-4/note/2` | D006-4 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D017/note/unnumbered/1` | D017 | 表現の差 | 単位違い |
+| `notice/ch2-part3-section4/general/3` | 第4節通則 | 未判定 | 構成項目・関係の個別照合待ち |
+
+### 包括群
+
+| 群ID | 区分 | 判定 | 理由の型 |
+| --- | --- | --- | --- |
+| `primary/D004-2/item/1/note/1` | D004-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D004-2/item/1/note/2` | D004-2 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D006/note/unnumbered/1` | D006 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D006-4/note/2` | D006-4 | 包括額の部分照合 | 所定点数欄の包括額・施設と一採取の条件は別 |
+| `primary/D006-27/note/1` | D006-27 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D006-27/note/2` | D006-27 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D007/note/unnumbered/1` | D007 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D008/note/unnumbered/1` | D008 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D009/note/2` | D009 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D012/item/11/note` | D012 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D012/item/46/note` | D012 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D013/note/unnumbered/1` | D013 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D014/note/1` | D014 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D015/item/13/note` | D015 | 所属の部分照合 | 適用単位・群の完全性は未確認 |
+| `primary/D016/item/2` | D016 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D016/item/4` | D016 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D016/item/5` | D016 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D019/heading` | D019 | 未判定 | 構成項目・関係の個別照合待ち |
+| `primary/D021/heading` | D021 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D011/paragraph/1` | D011 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D017/paragraph/2` | D017 | 未判定 | 構成項目・関係の個別照合待ち |
+| `notice/D020/paragraph/1` | D020 | 未判定 | 構成項目・関係の個別照合待ち |

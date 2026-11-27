@@ -160,9 +160,9 @@ git check-ignore tensuhyo/inventory/specimen-external-audit.json
 
 同じ作業ツリーで `lake env lean tools/FeeLedger.lean > tensuhyo/inventory/specimen-lean-ledger.json` を実行し、`python3 -m tools.audit_specimen --lean-ledger specimen-lean-ledger.json` でLean台帳を再利用できます。
 
-`tensuhyo/inventory/specimen-reviewed-names.json` は任意のローカルレビュー入力です。配列の各要素に `division`、Lean台帳の整数 `number`、NFKC正規化と空白除去を施した名称からLean項目名への `names` を記録します。構造と点数が一致する候補を原文で確認した場合に登録します。evidence 欄には同名をキーとして資料種別、PDF頁、判明した頁内行、条項ID、正規化規則を記録します。通則の加算と通知による準用の項目同定も、区分・種別・点数を確認して登録します。この絞り込みを要するコードはファイルがなければ未確定になります。
+`tensuhyo/inventory/specimen-reviewed-names.json` は任意のローカルレビュー入力です。配列の各要素に `division`、Lean台帳の整数 `number`、NFKC正規化と空白除去を施した名称からLean項目名への `names` を記録します。構造と点数が一致する候補を原文で確認した場合に登録します。evidence 欄には同名をキーとして資料種別、PDF頁、判明した頁内行、条項ID、正規化規則を記録します。通則の加算と通知による準用の項目同定も、区分・種別・点数を確認して登録します。同じ項の枝を明示する場合は値を `item` と `branch` のオブジェクトにします。確認済みの項番・注の表記差は `number` と `kind` も指定します。準用先の単価候補は `evidence.reference_rate` に区分、準用元欄の項番、Lean台帳の項番と項目名を保持し、準用元のコード対応とは別に出力します。多対一の対応は `evidence.projection` に記録します。この絞り込みを要するコードはファイルがなければ未確定になります。
 
-出力は `tensuhyo/inventory/specimen-external-audit.json` です。対応理由、マスター・電子表の行位置、条項候補、準用の出典探索、双方向の部分照合結果を含みます。summary の理由型別集計、未対応コードと頻度の区分別内訳、同日背反の区分対、包括の親コード・区分別内訳を参照できます。公式行、名称レビュー入力と出力はローカルに保持します。[検証状況](../docs/validation-status.md#検体検査の外部照合工程3a-5)
+出力は `tensuhyo/inventory/specimen-external-audit.json` です。対応理由、マスター・電子表の行位置、条項候補、準用の出典探索、双方向の部分照合結果を含みます。summary の理由型別集計、未対応コードと頻度の区分別内訳、背反の区分対と理由、群別判定、包括の親コード・区分別内訳を参照できます。公式行、名称レビュー入力と出力はローカルに保持します。[検証状況](../docs/validation-status.md#検体検査の外部照合工程3a-5)
 
 ## 残尿測定の限定的なCSV照合
 
