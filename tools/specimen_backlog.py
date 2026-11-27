@@ -11,10 +11,31 @@ from .notice_revisions import (amendment_counts, apply_amendments, effective_par
 from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, PRIMARY_SOURCE, R08_AS_OF, require_source
 
 
+def matches_replacement(paragraph: dict, rules: list[dict]) -> bool:
+    """枝差分を除き、確認済みの段落差替え・新設と同じ改正文書を指すかを調べる。"""
+    if "replacement" not in paragraph or not paragraph.get("effective_records"):
+        return False
+    change = paragraph["amendments"][-1]
+    url = change.get("source", {}).get("url")
+    effective_from = change.get("effective_from")
+    if not all(row["source"] == change["document"] for row in paragraph["effective_records"]):
+        return False
+    return bool(url and effective_from and any(
+        rule.get("url") == url
+        and rule.get("edition") == f"{effective_from}適用"
+        and rule.get("verification") == "checkedAgainstSource"
+        for rule in rules
+    ))
+
+
 def compare_clauses(fee: dict, notice: dict, rules: list[dict],
                     revisions: dict | None = None, notice_pages: list[str] | None = None
                     ) -> tuple[dict, dict]:
-    paths = {path for rule in rules for path in clause_paths(rule)}
+    rules_by_path = defaultdict(list)
+    for rule in rules:
+        for path in clause_paths(rule):
+            rules_by_path["/".join(path)].append(rule)
+    paths = {tuple(path.split("/")) for path in rules_by_path}
     expected = {"/".join(path) for path in paths if path[0] == "notice"}
     found = Counter()
     by_code = defaultdict(list)
@@ -38,6 +59,7 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
              "ambiguous": sorted(key for key in expected if found[key] > 1)}
     matches = set(check["matched"])
     rows = []
+    replacement_matches = set()
     for heading in fee["rows"]:
         chapter, code = heading["chapter"], heading["code"]
         if (heading["status"] != "listed" or chapter != 2 or heading["part"] != 3
@@ -57,10 +79,17 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
             if notice_pages is not None and paragraph["status"] != "baseline":
                 paragraph["effective_records"] = effective_paragraph_records(paragraph, notice_pages)
         paragraphs = [p for p in records if p["status"] != "deleted"]
-        unmatched_notice = [
-            p for p in paragraphs if p["status"] != "baseline"
-            or f"notice/{code}/paragraph/{p['number'] if p['number'] is not None else 'unnumbered'}" not in matches
-        ]
+        unmatched_notice = []
+        for paragraph in paragraphs:
+            number = paragraph["number"] if paragraph["number"] is not None else "unnumbered"
+            identifier = f"notice/{code}/paragraph/{number}"
+            if paragraph["status"] == "baseline" and identifier in matches:
+                continue
+            if (len(blocks) == 1 and not unresolved
+                    and matches_replacement(paragraph, rules_by_path.get(identifier, []))):
+                replacement_matches.add(identifier)
+            else:
+                unmatched_notice.append(paragraph)
         unchanged_numbers = {str(p["number"]) for p in paragraphs if p["status"] == "baseline"}
         matched_branches = [key for key in check["matched"] if key.startswith(f"notice/{code}/")
                             and key.count("/") == 4 and key.split("/")[3] in unchanged_numbers]
@@ -102,6 +131,10 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
             "notice_children_remaining": child_count - len(matched_branches) if notice_status == "indexed" and not revised_children else None,
             "notice_branch_refs": matched_branches,
         })
+
+    check["matched"] = sorted(matches | replacement_matches)
+    check["missing"] = sorted(set(check["missing"]) - replacement_matches)
+    check["ambiguous"] = sorted(set(check["ambiguous"]) - replacement_matches)
 
     summary = {
         "divisions": len(rows),

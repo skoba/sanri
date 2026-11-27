@@ -99,6 +99,8 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 
 同じ基準日の外来について、[D004-2](./Sanri/D004Tumor.lean)の腫瘍組織検査、[D004-3](./Sanri/D004Methylation.lean)のDNAメチル化検出、[D006](./Sanri/D006.lean)の出血・凝固検査、[D006-2・D006-3](./Sanri/D006Leukemia.lean)の実施料を収載しています。同一採取の包括や算定履歴を用いる場合の定理の前提と、外部資料の照合結果は[検証状況](./docs/validation-status.md)に記録しています。
 
+同じ外来範囲で、[D006-4](./Sanri/D006Genetic.lean)の遺伝学的検査、[D006-5](./Sanri/D006Chromosome.lean)の染色体検査、[D006-6〜13](./Sanri/D006GeneTests.lean)と[D006-14〜18](./Sanri/D006Oncology.lean)の実施料を追加しました。D006-17は2026-07-01適用の準用を含みます。外部入力に残した条件と未着手の区分は[検証状況](./docs/validation-status.md)に記録しています。
+
 Ｄ００４－２・Ｄ００４－３、Ｄ００６系列・Ｄ００８の個別検査、Ｄ０２７、脳波・神経・眼科・内視鏡等の未提示の生体検査区分は未実装です。Ｄ２２１は削除として算定項目を作っていません。
 
 ### 第４部 画像診断

@@ -4,10 +4,26 @@ import unittest
 
 from tools.draft_fee import notice_excerpt
 from tools.notice_inventory import build_notice
-from tools.specimen_backlog import compare_clauses
+from tools.specimen_backlog import compare_clauses, matches_replacement
 
 
 class NoticeInventoryTests(unittest.TestCase):
+    def test_replacement_requires_the_checked_effective_source(self):
+        url = "https://example.test/replacement.pdf"
+        change = {"document": "replacement.pdf", "effective_from": "2026-07-01",
+                  "source": {"url": url}}
+        paragraph = {"replacement": "合成段落", "amendments": [change],
+                     "effective_records": [{"source": "replacement.pdf"}]}
+        rule = {"url": url, "edition": "2026-07-01適用",
+                "verification": "checkedAgainstSource"}
+        self.assertTrue(matches_replacement(paragraph, [rule]))
+        self.assertFalse(matches_replacement(paragraph, [{**rule, "url": "https://example.test/old.pdf"}]))
+        self.assertFalse(matches_replacement(paragraph, [{**rule, "edition": "2026-08-01適用"}]))
+        self.assertFalse(matches_replacement(paragraph, [{**rule, "verification": "transcribed"}]))
+        combined = {**paragraph, "effective_records": [
+            {"source": "baseline"}, {"source": "replacement.pdf"}]}
+        self.assertFalse(matches_replacement(combined, [rule]))
+
     def test_scope_spans_and_unresolved_references(self):
         pages = [
             "第２章  架空章\n第 ３ 部  架空部\n＜通則＞\n１  合成通則\n"

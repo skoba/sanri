@@ -29,12 +29,13 @@ private unsafe def ruleRow (module name : String) (rule : Expr) : MetaM Json := 
   if source.hasFVar then
     return Json.mkObj ((fields ++ [("classification", "parameterized")]).map
       (fun (key, value) => (key, toJson value)) ++
-      ["kind", "identifier", "edition", "location", "verification"].map (·, Json.null))
+      ["kind", "identifier", "edition", "location", "verification", "url"].map (·, Json.null))
   let ref ← evalExpr SourceRef (mkConst ``SourceRef) source
   return jsonFields (fields ++ [
     ("kind", (reprStr ref.kind).replace "Sanri.Logic.SourceKind." ""),
     ("identifier", ref.identifier), ("edition", ref.edition), ("location", ref.location),
-    ("verification", (reprStr ref.verification).replace "Sanri.Logic.SourceVerification." "")])
+    ("verification", (reprStr ref.verification).replace "Sanri.Logic.SourceVerification." ""),
+    ("url", ref.url.getD "")])
 
 private unsafe def listRows (module name : String) (value : Expr) :
     Nat → MetaM (List Json)
@@ -156,7 +157,37 @@ private unsafe def points : MetaM (List Json) := do
   let bcrAbl := D006Leukemia.D006_3.ledgerItems.map fun i =>
     pointRow "D006-3" (reprStr i |>.splitOn "." |>.getLast!) "base"
       i.number 0 (some D006Leukemia.D006_3.points)
-  return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++ tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++ specimens
+  let genetic := D006Genetic.ledgerItems.map fun i =>
+    pointRow "D006-4" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
+  let geneticBundle := D006Genetic.ledgerItems.map fun i =>
+    pointRow "D006-4" (reprStr i |>.splitOn "." |>.getLast!) "note" 2 0
+      (some (i.points + i.points / 2))
+  let chromosome := D006Chromosome.ledgerItems.map fun i =>
+    pointRow "D006-5" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
+  let banding := pointRow "D006-5" "banding" "note" 1 0 (some D006Chromosome.bandingPoints)
+  let gene := D006GeneTests.ledgerItems.map fun i =>
+    pointRow ("D006-" ++ toString i.suffix) (reprStr i |>.splitOn "." |>.getLast!)
+      "base" 0 0 (some i.points)
+  let ccr4 := pointRow "D006-10" "ccr4" "base" 0 0 (some D006GeneTests.Ccr4.points)
+  let fusion := pointRow "D006-11" "fip1l1Pdgfra" "base" 0 0 (some D006GeneTests.Fusion.points)
+  let egfr := pointRow "D006-12" "plasmaEgfr" "base" 0 0 (some D006GeneTests.Egfr.points)
+  let egfrReduction := pointRow "D006-12" "monthlyReduction" "note" 0 0
+    (some (90 * D006GeneTests.Egfr.points / 100))
+  let residualDisease := D006GeneTests.ResidualDisease.ledgerItems.map fun i =>
+    pointRow "D006-13" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
+  let oncology := D006Oncology.ledgerItems.map fun i =>
+    pointRow ("D006-" ++ toString i.suffix) (reprStr i |>.splitOn "." |>.getLast!)
+      "base" 0 0 (some i.points)
+  let nudt15 := pointRow "D006-17" "nudt15" "base" 0 0 (some D006Oncology.Pharmacogenetics.points)
+  let apoe := pointRow "D006-17" "apoe" "reference" 0 0 (some D006Oncology.Pharmacogenetics.points)
+  let brca := D006Oncology.Brca.ledgerItems.map fun i =>
+    pointRow "D006-18" (reprStr i |>.splitOn "." |>.getLast!) "base"
+      i.number 0 (some D006Oncology.Brca.points)
+  return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
+    tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
+    genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
+    [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
+    brca ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do
