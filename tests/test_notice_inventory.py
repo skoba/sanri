@@ -6,7 +6,7 @@ from tools.draft_fee import notice_excerpt
 from tools.notice_inventory import build_notice
 from tools.pdf_sources import NOTICE_SOURCE
 from tools.specimen_backlog import (
-    amendment_branch_matches, compare_clauses, matches_nested_additions, matches_replacement,
+    amendment_branch_matches, compare_clauses, matches_branch_amendments, matches_nested_additions, matches_replacement,
     nested_notice_paths,
 )
 
@@ -104,6 +104,26 @@ class NoticeInventoryTests(unittest.TestCase):
         self.assertTrue(matches_nested_additions(paragraph, base, rules))
         self.assertFalse(matches_nested_additions(paragraph, base, {**rules, base: []}))
         self.assertFalse(matches_nested_additions(paragraph, base, {**rules, f"{base}/ka/4": []}))
+
+    def test_amended_kana_preserves_parent_and_requires_revision_sources(self):
+        url = "https://example.test/amendment.pdf"
+        parent = "notice/D997/paragraph/1"
+        added = {"page": 1, "line": 1, "text": "ウ  合成追加", "source": "amendment.pdf"}
+        changed = {"page": 1, "line": 2, "text": "ア  合成変更", "source": "amendment.pdf"}
+        changes = [
+            {"document": "amendment.pdf", "operation": operation, "anchor": anchor,
+             "new_locator": locator, "effective_from": "2026-07-01", "records": [row],
+             "source": {"url": url}}
+            for operation, anchor, locator, row in
+            [("add", "(1)イ", "ウ", added), ("change", "(1)ア", "ア", changed)]
+        ]
+        paragraph = {"amendments": changes, "effective_records": [changed, added]}
+        baseline = {"url": NOTICE_SOURCE["url"], "verification": "checkedAgainstSource"}
+        amendment = {"url": url, "edition": "2026-07-01適用", "verification": "checkedAgainstSource"}
+        rules = {parent: [baseline], f"{parent}/u": [amendment], f"{parent}/a": [amendment]}
+        self.assertTrue(matches_branch_amendments(paragraph, parent, rules))
+        self.assertFalse(matches_branch_amendments(paragraph, parent,
+                                                  {**rules, f"{parent}/a": [baseline]}))
 
     def test_scope_spans_and_unresolved_references(self):
         pages = [

@@ -116,8 +116,10 @@ private theorem requires_iff (a b : Option Bool) :
   | none => simp [requires]
   | some value => cases value <;> simp [requires]
 
+private def vitaminDMethods := [Method.eclia, .clia, .cleia]
+
 def VitaminDRequirements (c : Context) : Prop :=
-  MethodIn c.method [.eclia, .clia, .cleia] ∧
+  MethodIn c.method vitaminDMethods ∧
   ((c.vitaminDIndication = some .primaryOsteoporosisTreatmentSelection ∧
     c.followsVitaminDGuidelines = some true ∧ c.vitaminDFirstForIndication = some true) ∨
    (c.vitaminDIndication = some .deficiencyDiagnosis ∧
@@ -127,13 +129,13 @@ def VitaminDRequirements (c : Context) : Prop :=
 private theorem vitaminD_iff (c : Context) :
     VitaminDRequirements c ↔ vitaminDEligible c = some true := by
   cases hm : c.method with
-  | none => simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm]
+  | none => simp [VitaminDRequirements, vitaminDMethods, MethodIn, vitaminDEligible, hm]
   | some m =>
     cases hi : c.vitaminDIndication with
-    | none => cases m <;> simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm, hi]
+    | none => cases m <;> simp [VitaminDRequirements, vitaminDMethods, MethodIn, vitaminDEligible, hm, hi]
     | some indication =>
       cases indication <;> cases m <;>
-        simp [VitaminDRequirements, MethodIn, vitaminDEligible, hm, hi, requires_iff]
+        simp [VitaminDRequirements, vitaminDMethods, MethodIn, vitaminDEligible, hm, hi, requires_iff]
 
 def lipoproteinIntervalRule : Rule Context Unit :=
   ⟨"notice/D007/paragraph/19", notice "PDF357頁 D007(19)", fun c _ =>
@@ -156,6 +158,21 @@ def cystatinMethodAndIntervalRule : Rule Context Unit :=
       .nephelometry] ∧ c.suspectedRenalDeclineFromBunOrCreatinine = some true ∧
       c.threeMonthLimitAllows = some true⟩
 
+def vitaminDOsteoporosisRule : Rule Context Unit :=
+  ⟨"notice/D007/paragraph/24/a", notice "PDF357頁 D007(24)ア", fun c _ =>
+    c.item = .vitaminD25 →
+    c.vitaminDIndication = some .primaryOsteoporosisTreatmentSelection →
+      MethodIn c.method vitaminDMethods ∧ c.followsVitaminDGuidelines = some true ∧
+        c.vitaminDFirstForIndication = some true⟩
+
+def vitaminDDeficiencyRule : Rule Context Unit :=
+  ⟨"notice/D007/paragraph/24/i", notice "PDF357頁 D007(24)イ", fun c _ =>
+    c.item = .vitaminD25 →
+      (c.vitaminDIndication = some .deficiencyDiagnosis →
+        MethodIn c.method vitaminDMethods ∧ c.vitaminDFirstForIndication = some true) ∧
+      (c.vitaminDIndication = some .deficiencyTreatment →
+        MethodIn c.method vitaminDMethods ∧ c.threeMonthLimitAllows = some true)⟩
+
 def vitaminDRule : Rule Context Unit :=
   ⟨"notice/D007/paragraph/24", notice "PDF357頁 D007(24)", fun c _ =>
     c.item = .vitaminD25 → VitaminDRequirements c⟩
@@ -172,17 +189,30 @@ def inulinRule : Rule Context Unit :=
 
 def eligibilityRules : List (Rule Context Unit) :=
   [lipoproteinIntervalRule, heparinWindowRule, lungMarkerMethodsRule,
-    cystatinMethodAndIntervalRule, vitaminDRule, pentosidineRule,
+    cystatinMethodAndIntervalRule, vitaminDRule, vitaminDOsteoporosisRule, vitaminDDeficiencyRule, pentosidineRule,
     inulinRule]
 
 def Eligibility (c : Context) : Prop :=
   Satisfies eligibilityRules c ()
 
 theorem eligibility_iff (c : Context) : Eligibility c ↔ eligible c = some true := by
+  have branchA (h : VitaminDRequirements c)
+      (i : c.vitaminDIndication = some .primaryOsteoporosisTreatmentSelection) :
+      MethodIn c.method vitaminDMethods ∧ c.followsVitaminDGuidelines = some true ∧
+        c.vitaminDFirstForIndication = some true := by
+    simpa [VitaminDRequirements, i] using h
+  have branchI (h : VitaminDRequirements c) :
+      (c.vitaminDIndication = some .deficiencyDiagnosis →
+        MethodIn c.method vitaminDMethods ∧ c.vitaminDFirstForIndication = some true) ∧
+      (c.vitaminDIndication = some .deficiencyTreatment →
+        MethodIn c.method vitaminDMethods ∧ c.threeMonthLimitAllows = some true) := by
+    constructor <;> intro i <;> simpa [VitaminDRequirements, i] using h
   cases hi : c.item <;>
     simp [Eligibility, eligibilityRules, satisfies_cons, satisfies_nil,
     lipoproteinIntervalRule, heparinWindowRule, lungMarkerMethodsRule,
-    cystatinMethodAndIntervalRule, vitaminDRule, pentosidineRule, inulinRule, eligible, hi, methodIn_iff, vitaminD_iff, requires_iff]
+    cystatinMethodAndIntervalRule, vitaminDRule, vitaminDOsteoporosisRule, vitaminDDeficiencyRule, pentosidineRule, inulinRule, eligible, hi, methodIn_iff, requires_iff]
+  rw [← vitaminD_iff]
+  exact ⟨And.left, fun h => ⟨h, branchA h, branchI h⟩⟩
 
 def eligibilityRule : Rule Context Nat :=
   ⟨"unclassified/d007-additional-eligibility-composite", notice "PDF357頁 D007(19)〜(21)・(23)〜(26)の個別条件",

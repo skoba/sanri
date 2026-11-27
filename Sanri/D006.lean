@@ -502,7 +502,8 @@ def drawBaseRule : Rule DrawGroup DrawResult :=
       r.otherPoints = baseSum g.other⟩
 
 def drawBundleRule : Rule DrawGroup DrawResult :=
-  ⟨"primary/D006/note/unnumbered/1", primary "区分注", fun g r =>
+  ⟨"primary/D006/note/unnumbered/1+primary/D006/note/i+primary/D006/note/ro",
+    primary "区分注・イ・ロ", fun g r =>
     (∀ n, bundlePoints g.bundled.length = some n → r.groupPoints = n) ∧
       r.total = r.otherPoints + r.groupPoints⟩
 

@@ -383,11 +383,13 @@ def geneBaseRule : Rule Group GroupResult :=
     (g.complex.length < 2 → p.complex = sumBase g.complex)⟩
 
 def simpleNoteRule : Rule Group GroupResult :=
-  ⟨"primary/D004-2/item/1/note/1", primary "注1", fun g p =>
+  ⟨"primary/D004-2/item/1/note/1+primary/D004-2/item/1/note/1/i+primary/D004-2/item/1/note/1/ro+primary/D004-2/item/1/note/1/ha",
+    primary "注1・イ〜ハ", fun g p =>
     ∀ n, simpleBundlePoints g.simple.length = some n → p.simple = n⟩
 
 def complexNoteRule : Rule Group GroupResult :=
-  ⟨"primary/D004-2/item/1/note/2", primary "注2", fun g p =>
+  ⟨"primary/D004-2/item/1/note/2+primary/D004-2/item/1/note/2/i+primary/D004-2/item/1/note/2/ro",
+    primary "注2・イ・ロ", fun g p =>
     ∀ n, complexBundlePoints g.complex.length = some n → p.complex = n⟩
 
 def totalRule : Rule Group GroupResult :=

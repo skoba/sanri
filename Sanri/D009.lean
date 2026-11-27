@@ -581,15 +581,15 @@ def note2 : Rule (List Item) Nat :=
     bundleCount xs ≤ 1 → p = (xs.map Item.base).sum⟩
 
 def note2I : Rule (List Item) Nat :=
-  ⟨"primary/D009/note/2", primary "PDF183頁 D009 注2イ", fun xs p =>
+  ⟨"primary/D009/note/2/i", primary "PDF183頁 D009 注2イ", fun xs p =>
     bundleCount xs = 2 → p = 230⟩
 
 def note2Ro : Rule (List Item) Nat :=
-  ⟨"primary/D009/note/2", primary "PDF183頁 D009 注2ロ", fun xs p =>
+  ⟨"primary/D009/note/2/ro", primary "PDF183頁 D009 注2ロ", fun xs p =>
     bundleCount xs = 3 → p = 290⟩
 
 def note2Ha : Rule (List Item) Nat :=
-  ⟨"primary/D009/note/2", primary "PDF183頁 D009 注2ハ", fun xs p =>
+  ⟨"primary/D009/note/2/ha", primary "PDF183頁 D009 注2ハ", fun xs p =>
     4 ≤ bundleCount xs → p = 385⟩
 
 def bundleRules := [note2, note2I, note2Ro, note2Ha]
