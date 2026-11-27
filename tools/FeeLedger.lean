@@ -128,7 +128,7 @@ private unsafe def points : MetaM (List Json) := do
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
   let specimens := (SpecimenTests.catalog.filter fun e => e.code != .d009 && e.code != .d010 && e.code != .d011 &&
-      !(e.code = .d012 && (e.number ≤ 21 || e.number = 62))).flatMap fun entry =>
+      e.code != .d012).flatMap fun entry =>
     let code := (reprStr entry.code |>.splitOn "." |>.getLast! |>.toUpper).replace "_" "-"
     entry.variants.map fun item => pointRow code item "base" entry.number entry.branch entry.points
   let markers := (List.finRange 36).map fun slot =>
@@ -145,6 +145,8 @@ private unsafe def points : MetaM (List Json) := do
     pointRow "D012" (toString item.number) "base" item.number 0 (some item.points)
   let infectionCap := pointRow "D012" "viralCap" "note" 11 0
     (some D012.viralCapPoints)
+  let infectionClassCap := pointRow "D012" "classCap" "note" 46 0
+    (some D012.classCapPoints)
   let puncture := D004.ledgerItems.map fun item =>
     let price := item.fixedPoints
     pointRow "D004" (reprStr item |>.splitOn "." |>.getLast!)
@@ -240,7 +242,7 @@ private unsafe def points : MetaM (List Json) := do
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
     brca ++ profiling ++ targeted ++ plasmaPanel ++ plasmaBundles ++ lateGenetic ++
-    endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap] ++ specimens
+    endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap, infectionClassCap] ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

@@ -1,5 +1,6 @@
 import Sanri.Examinations
 import Sanri.Logic
+import Sanri.SpecimenRules
 
 namespace Sanri.MedicalFee.SpecimenJudgment
 
@@ -138,6 +139,65 @@ def applyToSpecimen (judgment : Context) (specimen : Examinations.SpecimenContex
   if specimen.inpatient then none else
     let a ← assess judgment
     some { specimen with judgmentPoints := a.total }
+
+/-- 準用元の実施を保持する。準用先の検査を実施したものとして扱わない。 -/
+inductive D023Reference where
+  | bk (request : SpecimenTests.BkRequest)
+  | mycobacteria (request : SpecimenTests.MycobacteriaRequest)
+
+def D023Reference.points : D023Reference → Option Nat
+  | .bk request => SpecimenTests.bkReferencePoints request
+  | .mycobacteria request => SpecimenTests.mycobacteriaReferencePoints request
+
+/-- 第１款の微生物学的検査。準用元に告示の項番はない。 -/
+def D023Reference.judgmentTest (_ : D023Reference) : Test :=
+  { major := 23, ordinaryCategory := .microbiological }
+
+/-- 外来の同一集計範囲で既存の実施料・判断料一覧に準用を追加する。
+既存一覧との実施の重複は呼出元で照合し、この一覧内では実施IDを照合する。 -/
+def applyD023References (references : List (Nat × D023Reference))
+    (judgment : Context) (specimen : Examinations.SpecimenContext) :
+    Option Examinations.SpecimenContext := do
+  if !(references.map Prod.fst).Nodup then none else
+    let items ← references.mapM fun (_, reference) => do
+      let points ← reference.points
+      pure ({ kind := 23, executionPoints := points } : Examinations.SpecimenItem)
+    applyToSpecimen
+      { judgment with tests := judgment.tests ++ references.map (·.2.judgmentTest) }
+      { specimen with items := specimen.items ++ items }
+
+private def bkSample : D023Reference :=
+  .bk {
+    insuranceMedicalInstitution := true
+    performed := true
+    specimen := .plasma
+    organOrHematopoieticCellTransplant := true
+    indication := some .suspectedNephropathy
+    recordedIndication := some .suspectedNephropathy }
+
+private def mycobacteriaReferenceSample : D023Reference :=
+  .mycobacteria {
+    insuranceMedicalInstitution := true
+    performed := true
+    specimen := .sputum
+    dnaDetectionByPcrRsso := true
+    panelSize := 28
+    claimsInTreatmentSeries := 0
+    indication := some .suspectedPulmonaryTbAndNontuberculousDisease
+    recordedIndication := some .suspectedPulmonaryTbAndNontuberculousDisease
+    necessityRecorded := true
+    staffingRequirementMet := true }
+
+example : (do
+    let assessed ← applyD023References [(1, bkSample), (2, mycobacteriaReferenceSample)] {} {}
+    let execution ← Examinations.executionPoints assessed
+    pure (execution, assessed.judgmentPoints)) = some (1413, 150) := by decide
+
+example : (applyD023References [(1, bkSample)]
+    { categoriesClaimedThisMonth := [.microbiological] } {}).map (·.judgmentPoints) =
+    some 0 := by decide
+
+example : (applyD023References [(1, bkSample), (1, bkSample)] {} {}).isNone = true := by decide
 
 private def urine : Test :=
   { major := 1, ordinaryCategory := .urineFecal }
