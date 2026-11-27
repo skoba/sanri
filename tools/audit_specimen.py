@@ -9,6 +9,7 @@ from fractions import Fraction
 from itertools import combinations, product
 import json
 import re
+import subprocess
 import unicodedata
 import zipfile
 
@@ -20,7 +21,7 @@ from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, R08_DOWNLOADS
 from .r08_inventory import compact, notice_spans
 from .specimen_exception_review import review_remaining
 from .specimen_audit_groups import (
-    METHOD_BUNDLES, group_inventory, group_pair_presence, reviewed_partial_scopes,
+    METHOD_BUNDLES, SELECTION_IDS, group_inventory, group_pair_presence, reviewed_partial_scopes,
 )
 from .procedure_master import (
     ARCHIVE_SHA256, INDEX_COLUMNS, LOCAL, _write, index_rows,
@@ -1416,11 +1417,8 @@ def compare_tables(tables, mapping, locations):
     return reverse
 
 
-def selection_pair_audit(tables, mapping):
-    inverse = defaultdict(set)
-    for code, entry in mapping.items():
-        if (point := entry["lean"]) and entry["master"]["入外適用区分"] != "1":
-            inverse[item_key(point)].add(code)
+def indexed_choice_pairs():
+    """外部照合で使う項目対。適用条件や制約の方向は含まない。"""
     group_pairs = defaultdict(set)
     for _, clause, _, a, b in CHOICES:
         group_pairs[clause].add(tuple(sorted((a, b))))
@@ -1445,6 +1443,37 @@ def selection_pair_audit(tables, mapping):
         (("D007", item), ("D010", counterpart))
         for item, counterpart in product(("totalCarnitine", "freeCarnitine"),
                                         ("8/i", "8/ro", "8/ha", "8/ni")))
+    return group_pairs
+
+
+def check_choice_inventory():
+    pairs = indexed_choice_pairs()
+    expected = {clause: {item for pair in pairs[clause] for item in pair}
+                for clause in set(SELECTION_IDS) | pairs.keys()}
+    lean = subprocess.run(["lake", "env", "lean", "tools/SpecimenSelectionInventory.lean"],
+                          check=True, capture_output=True, text=True)
+    projection = json.loads(lean.stdout)
+    rows = projection["inventory"]
+    actual = {clause: {tuple(item) for item in members} for clause, members in rows}
+    require(len(actual) == len(rows), "Leanの選択群IDが重複")
+    require(all(len(members) == len(actual[clause]) for clause, members in rows),
+            "Leanの選択群内に項目の重複")
+    outside = [clause for clause, _ in projection["outside_index"]]
+    require(len(set(outside)) == len(outside) and not set(outside).intersection(expected),
+            "Lean独自の選択群IDが重複又はPythonに登録済み")
+    different = sorted(key for key in actual.keys() | expected.keys()
+                       if actual.get(key) != expected.get(key))
+    require(not different, f"選択群の索引射影が異なる: {different}")
+    _write(INVENTORY / "specimen-selection-inventory.json", lean.stdout)
+    return len(actual)
+
+
+def selection_pair_audit(tables, mapping):
+    inverse = defaultdict(set)
+    for code, entry in mapping.items():
+        if (point := entry["lean"]) and entry["master"]["入外適用区分"] != "1":
+            inverse[item_key(point)].add(code)
+    group_pairs = indexed_choice_pairs()
     forward = group_pair_presence(group_pairs, inverse, tables)
     registered_pairs = set().union(*group_pairs.values())
     reverse = defaultdict(list)
@@ -1867,6 +1896,7 @@ def main():
         "three_combination_reviews": combination_reviews(reverse, tables, mapping),
     }
     if options.check_projection:
+        print(f"Lean・Pythonの選択群索引一致: {check_choice_inventory()}群")
         from .specimen_projection import check
         projection = check(tables, mapping, pair_presence, records_by_code, DAY,
                            INVENTORY / "specimen-projection-absence.json")

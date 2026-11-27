@@ -153,4 +153,44 @@ example : assess { sample with bloodCircuit := true } = some ⟨0, 0⟩ := by de
 example : assess { sample with history := ⟨⟨⟨2, some 2, Period.day sampleSite.date⟩, []⟩,
     by simp⟩ } = none := by decide
 
+/-- 告示PDF210頁の見出しと通知PDF446頁の乳幼児加算から、異方式併施時の
+本体点数を一意に決める読みはここでは確定しない。同日の二実施で両モデルを比較する。 -/
+private def mixedSite : Site := ⟨1, 2, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩
+
+private def mixedMethod (method prior : Method) : Context :=
+  { sample with
+    performance := ⟨2, mixedSite, method, none, none, none, none⟩
+    ageYears := 40
+    history := ⟨⟨⟨mixedSite.patient, some mixedSite.institution, .day mixedSite.date⟩,
+      [⟨1, mixedSite, prior, some 1⟩]⟩, by simp⟩ }
+
+private def adultCollection (method : Method) : SpecimenCollection.Context :=
+  { item := method.item, ageYears := 40 }
+
+private def sharedTotal (methods : List Method) : Option Nat :=
+  (SpecimenCollection.assessDay (methods.map adultCollection)).map
+    (fun charges => (charges.map SpecimenCollection.Assessment.total).sum)
+
+/-- 方式別では先に異方式を算定しても、後の実施に当日の方式枠が残る。 -/
+theorem mixed_method_history :
+    (assess (mixedMethod .other .venous)).map Result.total = some 6 ∧
+      (assess (mixedMethod .venous .other)).map Result.total = some 40 := by decide
+
+/-- 共有枠は順序により40点又は6点となる。各方式単独の日は点数が一致する。 -/
+theorem mixed_shared_frame :
+    sharedTotal [.venous, .other] = some 40 ∧ sharedTotal [.other, .venous] = some 6 ∧
+      sharedTotal [.venous] = some 40 ∧ sharedTotal [.other] = some 6 := by decide
+
+/-- 同じ二実施の方式別合計は各順序で46点。前の算定を後の履歴に入れても変わらない。 -/
+theorem mixed_method_total :
+    let first (method : Method) := { (mixedMethod method method) with
+      performance := ⟨1, mixedSite, method, none, none, none, none⟩
+      history := ⟨⟨⟨mixedSite.patient, some mixedSite.institution, .day mixedSite.date⟩, []⟩,
+        by simp⟩ }
+    let total (a b : Method) := do
+      let x ← assess (first a)
+      let y ← assess (mixedMethod b a)
+      return x.total + y.total
+    total .venous .other = some 46 ∧ total .other .venous = some 46 := by decide
+
 end Sanri.MedicalFee.D400
