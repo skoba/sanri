@@ -134,6 +134,9 @@ private unsafe def points : MetaM (List Json) := do
         else continue -- 同じ項目は further に含まれる。
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
+  for n in [5, 8, 10] do
+    let amount := BloodChemistry.pointsForItems (List.replicate n .calcium)
+    chemistry := pointRow "D007" ("bundle/" ++ toString n) "note" 0 0 (some amount) :: chemistry
   let specimens := (SpecimenTests.catalog.filter fun e => e.code != .d009 && e.code != .d010 && e.code != .d011 &&
       e.code != .d012 && e.code != .d013 && e.code != .d014 && e.code != .d015 &&
       e.code != .d016 && e.code != .d017 && e.code != .d018 && e.code != .d019 &&

@@ -164,6 +164,10 @@ git check-ignore tensuhyo/inventory/specimen-external-audit.json
 
 出力は `tensuhyo/inventory/specimen-external-audit.json` です。対応理由、マスター・電子表の行位置、条項候補、準用の出典探索、双方向の部分照合結果を含みます。summary の理由型別集計、未対応コードと頻度の区分別内訳、背反の区分対と理由、群別判定、包括の親コード・区分別内訳を参照できます。`group_inventory` の `direct_review` に第16列の所属の両側・片側、未対応項目、包括額対応の有無を出力します。方法・菌種・一連の群には関係表の位置を出力します。公式行、名称レビュー入力と出力はローカルに保持します。[検証状況](../docs/validation-status.md#検体検査の外部照合工程3a-5)
 
+工程3a-5eの出力の `selection_pair_presence` には群ごとの項目対・コード対の分母と欠落数、関連する背反・包括の位置、方向・単位・特例がある。`simultaneous_outside_registered_pairs` は両端対応済みで条項・単位または履歴単位が未確定の同時背反のうち、登録した項目対の外にあるものを区分対別に記録する。`direct_review.structural_amount_candidates` は包括額候補の構造欄を保持する。所定点数の一致だけでは包括額への対応を確定できない。
+
+個別の原本確認はローカルの `inventory/3a-5e-partial-review.json`、`3a-5e-no-pair-review.json`、`3a-5e-reverse-review.json`、`3a-5e-frequency-review.json`、`3a-5e-reference-review.json` に記録した。この作業環境に保存したレビュー用の `inventory/3a-5e-review-inputs.py` から更新する場合は、照合JSONを再生成してからリポジトリのルートで `PYTHONPATH=. python3 tensuhyo/inventory/3a-5e-review-inputs.py` を実行する。レビュー入力と原典はローカルの資料である。
+
 ## 残尿測定の限定的なCSV照合
 
 リポジトリのルートから実行します。対象コード・診療日・本文の共有上限と出典は、呼出元が確認して明示する入力です。スクリプト自身が本文やコード対応を公的資料から証明するわけではありません。

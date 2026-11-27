@@ -5,6 +5,7 @@ from collections import Counter, defaultdict
 import csv
 from datetime import date
 import hashlib
+from fractions import Fraction
 from itertools import combinations, product
 import json
 import re
@@ -17,7 +18,7 @@ from .fee_ledger import INVENTORY, compare_points, load_lean, read_index
 from .local_pdf import verified_pdf_pages
 from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, R08_DOWNLOADS
 from .r08_inventory import compact, notice_spans
-from .specimen_audit_groups import METHOD_BUNDLES, group_inventory
+from .specimen_audit_groups import METHOD_BUNDLES, group_inventory, group_pair_presence
 from .procedure_master import (
     ARCHIVE_SHA256, INDEX_COLUMNS, LOCAL, _write, index_rows,
     load_registered, require,
@@ -577,6 +578,18 @@ CHOICES += (
      ("D012", "pertussisAntigen"), ("D023", "respiratoryPanelWithoutCovid")),
 )
 
+# 既存の通知制約に含まれる相手。コードが検査種類をまとめる場合は適用範囲を保留する。
+CHOICES += (
+    ("infectionGroup", "notice/D012/paragraph/43/i", "performed_together",
+     ("D012", "pertussisAntigen"), ("D023", "pertussisGroup")),
+    ("BloodChemistryFurther.Pair.rule", "notice/D007/paragraph/18", "performed_together",
+     ("D007", "alpIsoenzymesAndBap"), ("D008", "bap")),
+    ("BloodChemistryFurther.Pair.rule", "notice/D007/paragraph/26", "specimen",
+     ("D007", "inulin"), ("D007", "creatinine")),
+    ("D013.coreRelatedAntigen", "notice/D013/paragraph/8", "exclusion_simultaneous",
+     ("D013", "hbcrAntigen"), ("D023", "hbvQuantity")),
+)
+
 CHOICES += (
     ("chemistryPriorityGroup", "notice/D007/paragraph/9", "performed_together",
      ("D007", "ketoneBodies"), ("D007", "ketoneFractions")),
@@ -643,6 +656,7 @@ CHOICES += same_division_choices("cultureSiteGroup", "D018", "1/e", "performed_t
 # 同じ台帳項目に入る別の疾患・検査も存在するため、行だけで全適用条件の一致としない。
 CONDITIONAL_CHOICE_PROJECTIONS = {
     "notice/D004-2/paragraph/8", "notice/D004-2/paragraph/9",
+    "notice/D007/paragraph/26", "notice/D013/paragraph/8",
     "notice/D006-22/paragraph/3", "notice/D006-24/paragraph/2",
     "notice/D009/paragraph/5", "notice/D009/paragraph/10/i", "notice/D009/paragraph/20/u",
     "notice/D009/paragraph/21/u", "notice/D009/paragraph/21/e",
@@ -761,6 +775,41 @@ FREQUENCY_EXCEPTIONS = {
     ("D015", "concizumab"): "反復が医学的に必要な場合と理由の記載",
 }
 
+# 回数の数値を比較し、患者・機関・検体・起算と例外の射影差を保持する。
+REVIEWED_FREQUENCY_PROJECTIONS = {
+    ("D004", "jointFluid"): ("141", 1, "1", "D004.rules"),
+    ("D004", "tearIgE"): ("131", 1, "7", "D004.rules"),
+    ("D004", "microbubble"): ("138", 1, "9", "D004.rules"),
+    ("D004", "tau"): ("53", 1, "11", "D004.rules"),
+    ("D004", "phosphoTau"): ("53", 1, "12", "D004.rules"),
+    ("D006-8", "krt19"): ("141", 1, "unnumbered", "D006GeneTests.Krt19.indicationRule"),
+    ("D006-9", "wt1"): ("131", 1, "unnumbered", "D006GeneTests.Wt1.indicationRule"),
+    ("D006-23", "homologousRecombination"): ("53", 1, "unnumbered", "D006Targeted.HomologousRecombination.indicationRule"),
+    ("D006-24", "lungPanel"): ("53", 1, "1", "D006Targeted.LungPanel.indicationRule"),
+    ("D006-25", "cyp2c9"): ("53", 1, "unnumbered", "D006Targeted.Cyp2c9.indicationRule"),
+    ("D006-26", "structuralVariation"): ("53", 1, "1", "D006Targeted.StructuralVariation.measurementRule"),
+    ("D006-17", "nudt15"): ("53", 1, "1", "D006Oncology.Pharmacogenetics.Nudt15Indication"),
+    ("D006-17", "apoe"): ("53", 1, "2", "D006Oncology.Pharmacogenetics.ApoeIndication"),
+    ("D007", "heparin"): ("131", 1, "20", "BloodChemistryAdditional.heparinWindowRule"),
+    ("D007", "acetaminophen"): ("131", 1, "37", "BloodChemistryLate.rules"),
+    ("D007", "cystatinC"): ("144", 1, "23/a", "BloodChemistryAdditional.cystatinMethodAndIntervalRule"),
+    ("D007", "totalCarnitine"): ("131", 1, "17/i", "BloodChemistryFurther.CarnitineContext.Requirements"),
+    ("D007", "freeCarnitine"): ("131", 1, "17/i", "BloodChemistryFurther.CarnitineContext.Requirements"),
+    ("D008", "bnp"): ("131", 1, "7/a", "D008.bnpIndication"),
+    ("D008", "ntProBnp"): ("131", 1, "10/a", "D008.ntProBnpIndication"),
+    ("D008", "amh"): ("146", 1, "28", "D008.amhRule"),
+    ("D008", "leptin"): ("53", 1, "29/a", "D008.leptinIndication"),
+    ("D012", "legionellaAntigen"): ("53", 1, "40", "D012.legionellaRule"),
+    ("D026", "managementI"): ("131", 1, "7", "SpecimenJudgment.managementNotification"),
+    ("D026", "marrow"): ("131", 1, "9", "SpecimenJudgment.marrowNotification"),
+    ("D023", "respiratoryPanelCovid"): ("141", 1, "37/a", "D023.panelMethod"),
+    ("D023", "respiratoryPanelWithoutCovid"): ("141", 1, "37/a", "D023.panelMethod"),
+    ("D023", "pneumoniaResistancePanel"): ("141", 1, "36", "D023.pneumoniaPanel"),
+}
+
+for key, (unit, limit, paragraph, definition) in REVIEWED_FREQUENCY_PROJECTIONS.items():
+    FREQUENCIES[key] = (unit, limit, f"notice/{key[0]}/paragraph/{paragraph}", definition)
+
 FREQUENCY_UNITS = {"53": "患者当り", "121": "日", "131": "月", "138": "週", "141": "一連",
                    "144": "3月", "145": "4月", "146": "6月", "147": "12月"}
 
@@ -784,7 +833,7 @@ NUMBERED_BUNDLES = {
 }
 
 BUNDLE_AMOUNT_KEYS = {
-    2: "bundle", 3: "bundle/", 5: "bundle/", 6: "bundle/", 7: "bundle/",
+    1: "bundle/", 2: "bundle", 3: "bundle/", 5: "bundle/", 6: "bundle/", 7: "bundle/",
     9: "viralCap", 10: "classCap", 11: "specificIgeCap", 13: "simple/", 14: "complex/",
 }
 
@@ -803,14 +852,24 @@ def bundle_direct_reviews(points, mapping, records, tables):
     expected_codes = defaultdict(set)
     observed_records = defaultdict(set)
     point_rows = defaultdict(list)
+    amount_candidates = defaultdict(list)
     mapped = {code for code, entry in mapping.items() if entry["lean"]}
     for code in mapped:
         group = bundle_projection(mapping[code]["lean"])
         if group:
             expected_codes[group].add(code)
-    for record in records:
+    for line, record in enumerate(records, 1):
         if record.usable_on(DAY) and record.in_out != "1":
             observed_records[record.bundle_group].add(record.code)
+            if (record.point_kind == "3" and
+                    (record.notice_kind in {"3", "7", "9"} or record.schedule_kind in {"3", "7"})):
+                amount_candidates[record.division].append({
+                    "code": record.code, "archive_line": line, "point_kind": record.point_kind,
+                    "notice_kind": record.notice_kind, "schedule_kind": record.schedule_kind,
+                    "code_table_number": [record.alpha, record.chapter, record.part, record.number,
+                                          record.branch, record.item],
+                    "points": record.points_text,
+                })
     for point in points:
         point_rows[point["division"]].append(point)
     result = {}
@@ -823,11 +882,21 @@ def bundle_direct_reviews(points, mapping, records, tables):
         amount_key = BUNDLE_AMOUNT_KEYS.get(group)
         amount_points = [p for p in point_rows[division] if p["kind"] == "note" and
                          amount_key and p["item"].startswith(amount_key)]
+        if group in {15, 16}:
+            names = {15: {"bundle4000", "bundle6000", "bundle8000"},
+                     16: {"bundle8000", "bundle12000"}}[group]
+            amount_points = [p for p in point_rows[division] if p["kind"] == "note" and p["item"] in names]
         amount_rows = [code for code in mapped if mapping[code]["lean"] in amount_points]
         result[clause] = {
             "master_group": group, "membership": membership,
             "unmapped_lean_items": sorted(expected_items - mapped_items),
             "lean_amount_items": [p["item"] for p in amount_points],
+            "lean_amount_points": [{"item": p["item"], "points": p["points"]} for p in amount_points],
+            "structural_amount_candidates": [
+                {**row, "coincident_amount": any(Fraction(row["points"]) == p["points"]
+                                                 for p in amount_points)}
+                for row in amount_candidates[division]
+            ],
             "matched_amount_rows": sorted(amount_rows),
             "amount_status": ("対応行あり" if amount_rows else "対応する包括額の行を同定できない"),
         }
@@ -942,7 +1011,15 @@ def pair_coverage(left, right, hits):
 
 
 # D014(7)イの二項目閾値を、手引きが非収載の例とする(1)の三項目閾値と区別する。
-REVIEWED_PAIR_GAPS = {"notice/D014/paragraph/7/i": ("D014", "c1q")}
+REVIEWED_PAIR_GAPS = {
+    "notice/D014/paragraph/7/i": {("D014", "c1q")},
+    "notice/D001/paragraph/4/i": {("D007", "amylase")},
+    "notice/D015/paragraph/4/i": {("D015", "drugImmunofixation")},
+    "notice/D023/paragraph/37/u": {
+        ("D012", item) for item in
+        ("covidQual", "covidQuant", "covidFlu", "covidRs", "covidFluRs", "pertussisAntigen")
+    },
+}
 
 
 def compare_tables(tables, mapping, locations):
@@ -1066,7 +1143,7 @@ def compare_tables(tables, mapping, locations):
                 same = ((rel["unit"], rel["limit"]) == (unit, limit)
                         and (not rel["special"] or exception is not None))
                 shared = key in RENAL_FREQUENCIES or key == ("D006-30", "retinalDystrophy")
-                representation = (shared or rel["special"] or fn == "elfSixMonthInterval"
+                representation = (key in REVIEWED_FREQUENCY_PROJECTIONS or shared or rel["special"] or fn == "elfSixMonthInterval"
                                   or key == ("D000", "rapidAddition")
                                   or fn in {"D015.tarcAtopy", "D015.sccaClinical", "D021.OneInSeries",
                                             "D023.hivGenotype", "D014.ApsSeries"})
@@ -1161,7 +1238,7 @@ def compare_tables(tables, mapping, locations):
         hits = by_choice[frozenset((a, b)), clause]
         included = inclusion_pairs.get(frozenset((a, b)), [])
         matched = any(hit["same_projection"] for hit in hits)
-        suspect = (REVIEWED_PAIR_GAPS.get(clause) in {a, b}
+        suspect = (REVIEWED_PAIR_GAPS.get(clause, set()) & {a, b}
                    and bool(inverse[a] and inverse[b]) and not hits and not included)
         reverse[f"{clause}/{a[1]}/{b[1]}"] = grade(
             SOURCE_CONFLICT if suspect else
@@ -1172,7 +1249,9 @@ def compare_tables(tables, mapping, locations):
             mapping_sizes=[len(inverse[a]), len(inverse[b])], electronic_rows=hits,
             inclusion_rows=included,
             coverage=pair_coverage(inverse[a], inverse[b], hits),
-            reason_type=("二項目で発動する通知に対応する表の行が見つからない" if suspect else
+            reason_type=(("二項目で発動する通知に対応する表の行が見つからない"
+                          if clause == "notice/D014/paragraph/7/i" else
+                          "通知で確認した相手との関係行を未同定") if suspect else
                          "同じ単位・採否の射影" if matched else
                          "単位違い" if clause not in CONDITIONAL_CHOICE_PROJECTIONS and
                          any(scope and hit["table"] != scope and hit["same_direction"]
@@ -1185,7 +1264,7 @@ def compare_tables(tables, mapping, locations):
     for key, (unit, limit, clause, fn) in FREQUENCIES.items():
         hits = by_frequency[key]
         reverse[f"{clause}/{key[1]}"] = grade(
-            (REPRESENTATION if key in RENAL_FREQUENCIES or key in FREQUENCY_EXCEPTIONS
+            (REPRESENTATION if key in REVIEWED_FREQUENCY_PROJECTIONS or key in RENAL_FREQUENCIES or key in FREQUENCY_EXCEPTIONS
              or key == ("D006-30", "retinalDystrophy") or fn == "elfSixMonthInterval" or key == ("D000", "rapidAddition") else MATCH)
             if hits else UNKNOWN, "対応コードの単位・回数で検索",
             clauses=[clause], lean_definition=fn, unit=unit, limit=limit, electronic_rows=hits)
@@ -1213,6 +1292,53 @@ def compare_tables(tables, mapping, locations):
                                for _, entry in members),
             electronic_rows=relations)
     return reverse
+
+
+def selection_pair_audit(tables, mapping):
+    inverse = defaultdict(set)
+    for code, entry in mapping.items():
+        if (point := entry["lean"]) and entry["master"]["入外適用区分"] != "1":
+            inverse[item_key(point)].add(code)
+    group_pairs = defaultdict(set)
+    for _, clause, _, a, b in CHOICES:
+        group_pairs[clause].add(tuple(sorted((a, b))))
+    # 収載だけを調べる群。閾値・対象ウイルス・例外を二件制約へ展開しない。
+    for clause, members in (
+        ("notice/D014/paragraph/1", (("D014", item) for item in
+         ("rf", "galactoseQual", "galactoseQuant", "mmp3", "c1q", "rfComplex", "iggRf"))),
+        ("notice/D007/paragraph/5", (("D007", item) for item in
+         ("hdlCholesterol", "totalCholesterol", "ldlCholesterol"))),
+        ("notice/D007/paragraph/7", (("D007", item) for item in
+         ("proteinFractionation", "totalProtein", "albumin"))),
+        ("notice/D011/paragraph/4/u", (("D011", item) for item in
+         ("pf4IgG", "pf4IgGmA", "pf4Qualitative"))),
+        ("notice/D005/paragraph/9", (("D005", "hemoglobinA1c"), ("D007", "glycatedAlbumin"),
+                                      ("D007", "anhydroglucitol"))),
+    ):
+        group_pairs[clause].update(tuple(sorted(pair)) for pair in combinations(members, 2))
+    group_pairs["notice/D004-2/paragraph/11"].update(
+        (("D004-2", item), ("D006-18", "tumorCells"))
+        for item in ("drugAid", "complex"))
+    group_pairs["notice/D007/paragraph/17/e"].update(
+        (("D007", item), ("D010", counterpart))
+        for item, counterpart in product(("totalCarnitine", "freeCarnitine"),
+                                        ("8/i", "8/ro", "8/ha", "8/ni")))
+    forward = group_pair_presence(group_pairs, inverse, tables)
+    registered_pairs = set().union(*group_pairs.values())
+    reverse = defaultdict(list)
+    for row in tables["exclusion_simultaneous"]:
+        if (row["structure"] != "両端対応済み" or row["reason_type"] not in
+                {"対応する条項・適用単位未確認", "履歴単位未確定"}):
+            continue
+        points = [mapping[code]["lean"] for code in row["codes"]]
+        if tuple(sorted(map(item_key, points))) in registered_pairs:
+            continue
+        key = "/".join(sorted(p["division"] for p in points))
+        reverse[key].append({**relation_positions("exclusion_simultaneous", row),
+                             "codes": row["codes"], "items": [item_key(p) for p in points],
+                             "reason_type": row["reason_type"], "direction": row["direction"],
+                             "special": row["special"]})
+    return forward, dict(sorted(reverse.items(), key=lambda entry: (-len(entry[1]), entry[0])))
 
 
 def compare_count_attributes(mapping, frequencies, records):
@@ -1496,6 +1622,7 @@ def main():
     tables, inclusion_lines = table_rows(snapshot, set(mapping))
     locations = {r.code: (r.chapter, r.part, r.division) for r in records}
     reverse = compare_tables(tables, mapping, locations)
+    pair_presence, unmatched_simultaneous = selection_pair_audit(tables, mapping)
     compare_count_attributes(mapping, tables["frequency"], records_by_code)
     parent_counts = defaultdict(Counter)
     parent_division_counts = defaultdict(Counter)
@@ -1592,6 +1719,8 @@ def main():
         "mapping_by_code": mapping, "electronic_to_lean": tables, "lean_to_electronic": reverse,
         "previous_point_set_differences": point_differences,
         "group_inventory": groups,
+        "selection_pair_presence": pair_presence,
+        "simultaneous_outside_registered_pairs": unmatched_simultaneous,
         "day_locations": [{"pair": pair, "count": count} for pair, count in day_counts.most_common()],
         "exclusions_by_division_pair": {
             table: [{"pair": pair, "reason_type": reason, "count": count}

@@ -1,5 +1,9 @@
 """外来検体検査の棚卸しで接続・部分接続した群の索引。"""
 
+from collections import defaultdict
+from itertools import product
+
+
 # 複数段落による一群は主条項で識別する。
 SELECTION_GROUPS = {
     "D001": "3 4/i 6/i 9/i",
@@ -76,7 +80,63 @@ PARTIAL_SCOPE = {
     "notice/D009/paragraph/5", "notice/D009/paragraph/10/i", "notice/D009/paragraph/20/u",
     "notice/D009/paragraph/21/u", "notice/D009/paragraph/21/e",
     "notice/D018/paragraph/1/u", "notice/D018/paragraph/1/e",
+    "notice/D012/paragraph/43/i", "notice/D007/paragraph/26",
+    "notice/D004-2/paragraph/11", "notice/D007/paragraph/17/e",
 }
+
+
+def pair_presence(expected, observed):
+    """項目対又はコード対の収載を数える。収載行の適用条件はここでは判定しない。"""
+    missing = expected - observed
+    status = ("比較対象なし" if not expected else "全対あり" if not missing else
+              "全対なし" if missing == expected else "一部のみ")
+    return {"status": status, "expected": len(expected), "missing": len(missing)}
+
+
+def group_pair_presence(group_pairs, inverse, tables):
+    by_pair = defaultdict(list)
+    codes = set().union(*inverse.values())
+    for table, rows in tables.items():
+        if table != "inclusion" and not table.startswith("exclusion_"):
+            continue
+        for row in rows:
+            if not all(code in codes for code in row["codes"]):
+                continue
+            by_pair[tuple(sorted(row["codes"]))].append({
+                "table": table, "codes": row["codes"], "special": row["special"],
+                **({"unit": row["unit"], "child_line": row["line"],
+                    "parent_line": row["auxiliary_line"],
+                    "parent_column": row.get("auxiliary_column")} if table == "inclusion" else
+                   {"direction": row["direction"], "lines": [r["line"] for r in row["rows"]]}),
+            })
+    result = {}
+    for group in sorted(set(SELECTION_IDS) | group_pairs.keys()):
+        pairs = sorted(group_pairs.get(group, ()))
+        item_rows, observed_items, missing_items = [], set(), set()
+        code_pairs, observed_codes = set(), set()
+        for a, b in pairs:
+            missing_items.update(item for item in (a, b) if not inverse.get(item))
+            expected = {tuple(sorted((x, y))) for x, y in product(inverse.get(a, ()), inverse.get(b, ()))
+                        if x != y}
+            observed = {pair for pair in expected if pair in by_pair}
+            if observed:
+                observed_items.add((a, b))
+            code_pairs.update(expected)
+            observed_codes.update(observed)
+            item_rows.append({
+                "items": (a, b), "code_pairs": pair_presence(expected, observed),
+                "missing_code_pairs": sorted(expected - observed),
+                "rows": [row for pair in sorted(observed) for row in by_pair[pair]],
+            })
+        result[group] = {
+            "scope": ("対の定義なし" if not pairs else "構成項目のコード未対応" if missing_items
+                      else "限定した対の射影" if group in PARTIAL_SCOPE else "登録済みの対"),
+            "unmapped_items": sorted(missing_items),
+            "item_pairs": pair_presence(set(pairs), observed_items),
+            "code_pairs": pair_presence(code_pairs, observed_codes),
+            "pairs": item_rows,
+        }
+    return result
 
 
 def choice_review(pairs, partial_scope):
@@ -97,7 +157,7 @@ def choice_review(pairs, partial_scope):
     elif matching:
         status, reason = "一部のみ", "一致対あり・他の対又は適用範囲が残る"
     elif "単位違い" in reasons:
-        status, reason = "表現の差", "単位違い"
+        status, reason = "未判定", "単位違い"
     elif any(not r.get("same_direction", r["direction"] == "3") for r in rows):
         status, reason = "未判定", "優先方向の対応未確認"
     elif reasons == {"不明"}:

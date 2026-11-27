@@ -12,7 +12,7 @@ from tools.audit_specimen import (
     table_rows, grade, MATCH, REPRESENTATION, SOURCE_CONFLICT, UNKNOWN, UNMODELED,
 )
 from tools.procedure_master import parse_row
-from tools.specimen_audit_groups import BUNDLE_IDS, SELECTION_IDS, choice_review
+from tools.specimen_audit_groups import BUNDLE_IDS, SELECTION_IDS, choice_review, group_pair_presence
 
 
 class SpecimenAuditTests(unittest.TestCase):
@@ -110,6 +110,36 @@ class SpecimenAuditTests(unittest.TestCase):
         self.assertEqual(len(set(SELECTION_IDS)), 89)
         self.assertEqual(len(set(BUNDLE_IDS)), 22)
 
+    def test_group_presence_tracks_item_and_code_pairs_independently(self):
+        a, b, c, d = (("D901", name) for name in ("A", "B", "C", "D"))
+        inverse = {a: {"a1", "a2"}, b: {"b"}, c: {"c"}}
+        observed = {
+            "exclusion_day": [{"codes": ["a1", "b"], "direction": "2", "special": True,
+                               "rows": [{"line": 10}]}],
+            "inclusion": [{"codes": ["c", "b"], "unit": "3", "special": False,
+                           "auxiliary_line": 11, "line": 12}],
+            "frequency": [{"codes": ["a2"], "unit": "121", "limit": 1, "special": False}],
+        }
+        groups = {"partial": {(a, b), (b, c)}, "none": {(a, c)},
+                  "unmapped": {(a, d)}, "full": {(b, c)}}
+        result = group_pair_presence(groups, inverse, observed)
+        self.assertEqual(result["partial"]["item_pairs"]["status"], "全対あり")
+        self.assertEqual(result["partial"]["code_pairs"],
+                         {"status": "一部のみ", "expected": 3, "missing": 1})
+        self.assertEqual(result["partial"]["pairs"][0]["missing_code_pairs"], [("a2", "b")])
+        self.assertTrue(result["partial"]["pairs"][0]["rows"][0]["special"])
+        self.assertEqual(result["partial"]["pairs"][1]["rows"][0]["codes"], ["c", "b"])
+        self.assertEqual(result["none"]["code_pairs"]["status"], "全対なし")
+        self.assertEqual(result["full"]["code_pairs"]["status"], "全対あり")
+        self.assertEqual(result["unmapped"]["code_pairs"]["status"], "比較対象なし")
+        self.assertEqual(result["unmapped"]["unmapped_items"], [d])
+
+    def test_unit_difference_stays_unresolved(self):
+        group = choice_review([{"mapping_sizes": [1, 1], "electronic_rows": [
+            {"table": "exclusion_simultaneous", "direction": "3", "special": False}],
+            "coverage": {"expected": 1, "matching": 0}, "reason_type": "単位違い"}], False)
+        self.assertEqual((group["status"], group["reason_type"]), ("未判定", "単位違い"))
+
     def test_choice_direction_keeps_the_preferred_side_after_normalization(self):
         clause = "notice/D901/paragraph/1"
         first = ("D901", "syntheticA")
@@ -130,7 +160,7 @@ class SpecimenAuditTests(unittest.TestCase):
         candidate = f"{clause}/syntheticA/syntheticB"
         row = {"codes": ["a", "b"], "direction": "3", "special": True, "rows": []}
         with patch("tools.audit_specimen.CHOICES", (("syntheticRule", clause, None, first, second),)):
-            with patch.dict("tools.audit_specimen.REVIEWED_PAIR_GAPS", {clause: first}):
+            with patch.dict("tools.audit_specimen.REVIEWED_PAIR_GAPS", {clause: {first}}):
                 incomplete = {**mapping, "b": {**mapping["b"], "lean": None}}
                 for records, related, expected in (
                     (mapping, [], SOURCE_CONFLICT),
