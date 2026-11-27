@@ -306,11 +306,11 @@ def Entry.clauseConstraint (g : Entry) : String := g.id
 
 def Entry.evidence (g : Entry) : Evidence :=
   match g.id with
-  | "notice/D001/paragraph/3" => ⟨some "同時", some "renalSimultaneousGroup", false⟩
+  | "notice/D001/paragraph/3" => ⟨some "同時", some "renalSimultaneousGroup", true⟩
   | "notice/D001/paragraph/4/i" => ⟨some "併せて実施", some "pancreaticGroup", false⟩
   | "notice/D001/paragraph/6/i" => ⟨some "同一月中", some "colitisChoice", false⟩
   | "notice/D001/paragraph/9/i" => ⟨some "併せて実施", some "urineSpecialSelectionInput", false⟩
-  | "notice/D002/paragraph/5" => ⟨some "併せて実施", some "sedimentMethodGroup", false⟩
+  | "notice/D002/paragraph/5" => ⟨some "併せて実施", some "sedimentMethodGroup", true⟩
   | "notice/D003/paragraph/4/u" => ⟨some "同一月中", some "colonoscopyGroup", false⟩
   | "notice/D004/paragraph/1" => ⟨some "併せて実施", some "jointFluidGroup", false⟩
   | "notice/D004/paragraph/13/i" => ⟨some "併せて行った", some "csfRatioGroup", false⟩
@@ -570,6 +570,68 @@ theorem atMostOne_iff_pairwise (ids : List Nat) (keep : Nat → Bool) :
       apply ih.mp
       have empty : rest.filter keep = [] := List.filter_eq_nil_iff.mpr (by simpa using all)
       simp [empty]
+
+/-- 発動と対象を固定した上限一件の群から、同時採用できない二頂点を得る。 -/
+def coMembers (groups : List (List Nat)) (a b : Nat) : Prop :=
+  a ≠ b ∧ ∃ group ∈ groups, a ∈ group ∧ b ∈ group
+
+theorem atMostOne_groups_iff_independent (groups : List (List Nat)) (keep : Nat → Bool)
+    (distinct : ∀ group ∈ groups, group.Nodup) :
+    (∀ group ∈ groups, (group.filter keep).length ≤ 1) ↔
+    (∀ a b, coMembers groups a b → keep a = true → keep b = false) := by
+  constructor
+  · intro limits a b edge ha
+    obtain ⟨hne, group, hg, hga, hgb⟩ := edge
+    cases hb : keep b
+    · rfl
+    · have ma : a ∈ group.filter keep := List.mem_filter.mpr ⟨hga, ha⟩
+      have mb : b ∈ group.filter keep := List.mem_filter.mpr ⟨hgb, hb⟩
+      have len := limits group hg
+      cases hs : group.filter keep with
+      | nil => simp [hs] at ma
+      | cons head tail =>
+        cases tail with
+        | nil => simp [hs] at ma mb
+                 exact (hne (ma.trans mb.symm)).elim
+        | cons x xs => simp [hs] at len
+  · intro independent group hg
+    apply (atMostOne_iff_pairwise group keep).mpr
+    rw [List.pairwise_iff_getElem]
+    intro i j hi hj hij ha
+    have neq : group[i] ≠ group[j] := by
+      have hd : group.Pairwise (· ≠ ·) := distinct group hg
+      exact List.pairwise_iff_getElem.mp hd i j hi hj hij
+    exact independent _ _ ⟨neq, group, hg, List.getElem_mem _, List.getElem_mem _⟩ ha
+
+/-- D007(18)の複合測定とD008(16)のPAG法は別頂点。各群の併施判定を独立に固定する。 -/
+theorem alp_component :
+    let combined : ChoiceGroup := ⟨BloodChemistryFurther.alpMethodRule.source, [1, 2], 1⟩
+    let bone : ChoiceGroup := ⟨D008.alpRule.source, [2, 3, 4, 5], 1⟩
+    (consistentSelections [combined, bone] [] []).isPerm [[2], [1, 3], [1, 4], [1, 5]] ∧
+    (consistentSelections [combined] [3, 4, 5] []).isPerm [[1, 3, 4, 5], [2, 3, 4, 5]] ∧
+    (consistentSelections [bone] [1] []).isPerm [[2, 1], [3, 1], [4, 1], [5, 1]] ∧
+    consistentSelections [] [1, 2, 3, 4, 5] [] = [[1, 2, 3, 4, 5]] := by decide
+
+/-- D015(4)イの検体群と(12)イの同時群。両方に入る抗血清二実施を共有する。 -/
+theorem electrophoresis_component :
+    let specimen : ChoiceGroup := ⟨D015.electrophoresisChoice.source, [1, 2, 3], 1⟩
+    let simultaneous : ChoiceGroup := ⟨D015.lightChainChoice.source, [1, 2, 4], 1⟩
+    (consistentSelections [specimen, simultaneous] [] []).isPerm [[1], [2], [3, 4]] ∧
+    (consistentSelections [specimen] [4] []).isPerm [[1, 4], [2, 4], [3, 4]] ∧
+    (consistentSelections [simultaneous] [3] []).isPerm [[1, 3], [2, 3], [4, 3]] ∧
+    consistentSelections [] [1, 2, 3, 4] [] = [[1, 2, 3, 4]] ∧
+    consistentSelections [specimen, ⟨simultaneous.source, [1, 4], 1⟩,
+      ⟨simultaneous.source, [2, 4], 1⟩] [] [] = [[3, 4]] := by decide
+
+/-- D014(16)イ・(19)イは疾患別の経過観察、(23)イは鑑別診断に分ける。 -/
+theorem skin_antibody_component :
+    let vulgaris : ChoiceGroup := ⟨D014.vulgarisChoice.source, [1, 2], 1⟩
+    let foliaceus : ChoiceGroup := ⟨D014.foliaceusChoice.source, [1, 2], 1⟩
+    let differential : ChoiceGroup := ⟨D014.skinComboChoice.source, [1, 2, 3, 4], 1⟩
+    (consistentSelections [vulgaris] [] []).isPerm [[1], [2]] ∧
+    (consistentSelections [foliaceus] [] []).isPerm [[1], [2]] ∧
+    (consistentSelections [differential] [] []).isPerm [[1], [2], [3], [4]] ∧
+    consistentSelections [] [1, 2, 3, 4] [] = [[1, 2, 3, 4]] := by decide
 
 /-- D014(24)イ・(27)イの各一実施。併測と確認した場合の上限と、
 その単位の外にある場合の採否を比較する。 -/

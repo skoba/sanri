@@ -489,8 +489,11 @@ def d001BundleReference (urine : UrineFecalTests.Context)
     (group : SameDayBundle BloodChemistry.Item) (item : BloodChemistry.Item) : Prop :=
   UrineFecalTests.assess urine = some (.requiresReference (.other .d007) true) ∧ item ∈ group.urine
 
+theorem huhner_eligible : Eligible { item := .huhner } := by
+  simp [Eligible, clauses, Clause.required]
+
 example : DeterminesAt rules { item := .huhner } :=
-  determines_on _ (by simp [Eligible, clauses, Clause.required])
+  determines_on _ huhner_eligible
 
 private def hamExample : Context :=
   { item := .cxcl10, method := some .elisa, hamActivityAssessment := some true,

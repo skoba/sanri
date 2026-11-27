@@ -6,6 +6,11 @@ open Sanri.History Sanri.Logic SpecimenCrossDivision
 
 inductive Item where
   | urine (context : D000.Context)
+  | specialUrine (item : UrineFecalTests.UrineSpecial)
+  | sediment (method : UrineSediment.Method)
+  | fecal (item : UrineFecalTests.Fecal)
+  | punctureFluid (item : D004.Item)
+  | tumorTissue (item : D004Tumor.Item)
   | morphology (context : BloodMorphology.Context)
   | chemistry (item : BloodChemistry.Item)
   | coagulation (item : D006.Item)
@@ -21,6 +26,19 @@ inductive Item where
 
 def Item.supported : Item → Bool
   | .urine _ => true
+  | .specialUrine i =>
+    match i with
+    | .trypsinogen2
+    | .prostaglandinEMajorMetabolite | .lFabp | .ngal | .proteinImmunology | .other _ => false
+    | _ => true
+  | .sediment _ => true
+  | .fecal i => decide (i ≠ .calprotectin)
+  | .punctureFluid i =>
+    match i with
+    | .jointFluid | .phosphoTau | .amyloidRatio | .phosphoTauAmyloidRatio
+    | .csfImmunology | .csfSmear | .other => false
+    | _ => true
+  | .tumorTissue _ => true
   | .morphology c => [BloodMorphology.Item.completeBloodCount, .eosinophilCount,
       .automatedDifferential, .microscopicDifferential].contains c.item
   | .chemistry i => [BloodChemistry.Item.bun, .uricAcid, .glucose, .ast, .alt, .creatinine,
@@ -59,6 +77,28 @@ structure Input where
   autoantibodyDayConfirmed : Bool := false
   /-- D007のPAG法とD008のBAPが通知D008(16)の併施範囲に入るか。 -/
   alpPaired : Option Bool := none
+  /-- D001の通知条件を、同じ原実施に結び付けた既存の区分入力で確認する。 -/
+  specialUrineFacts : (p : Performance UrineFecalTests.UrineSpecial) →
+    Option { ctx : D001.Context // ctx.performance = p ∧ D001.Eligible ctx } := fun _ => none
+  /-- 鏡検とフローの二件が通知の併施範囲に入るか。 -/
+  sedimentPaired : Option Bool := none
+  sedimentFacts : (p : Performance UrineSediment.Method) → (paired : Bool) →
+    Option { ctx : UrineSediment.Context // ctx.performance = p ∧
+      ctx.d017 = some .noCombinedPerformance ∧
+      ctx.otherSedimentPerformed = some paired ∧ UrineSediment.InScope p.item ctx } :=
+    fun _ _ => none
+  fecalFacts : (p : Performance UrineFecalTests.Fecal) →
+    Option { ctx : D003.Context // ctx.performance = p ∧ D003.Eligible ctx } := fun _ => none
+  punctureFluidFacts : (p : Performance D004.Item) →
+    Option ({ ctx : D004.Context // ctx.item = p.item ∧ D004.Eligible ctx } ×
+      SpecimenJudgment.Category) := fun _ => none
+  /-- 同じ採取の原実施を、確認済みの同一がん種・検査種の群に対応付ける。 -/
+  tumorTissueGroup : (rows : List (Performance D004Tumor.Item)) →
+    Option { g : D004Tumor.Group // g.Valid ∧ g.tests.map (·.test.performance) = rows } :=
+    fun _ => none
+  tumorSensitivityFacts : (p : Performance D004Tumor.Item) →
+    Option ({ ctx : D004Tumor.Classified // ctx.test.performance = p ∧ D004Tumor.Eligible ctx } ×
+      SpecimenJudgment.Category) := fun _ => none
 
 def Input.site (c : Input) : Site := c.judgment.day.site
 
@@ -79,6 +119,100 @@ private def Input.urine (c : Input) : List D000.Context :=
   c.rows.filterMap fun p => match p.item with
     | .urine ctx => some { ctx with performance := { p with item := () } }
     | _ => none
+
+private def Input.specialUrine (c : Input) : List (Performance UrineFecalTests.UrineSpecial) :=
+  c.rows.filterMap fun p => match p.item with
+    | .specialUrine i => some { p with item := i }
+    | _ => none
+
+private def specialUrinePoints (ctx : D001.Context) : Option Nat :=
+  match UrineFecalTests.assess (D001.legacyInput ctx) with
+  | some (.charged charge) => some charge.base
+  | _ => none
+
+theorem special_urine_projection (ctx : D001.Context) (eligible : D001.Eligible ctx)
+    (points : Nat) : specialUrinePoints ctx = some points ↔ Satisfies D001.rules ctx points := by
+  rw [D001.satisfies_iff]
+  simp only [eligible.1, true_and, specialUrinePoints]
+  cases h : UrineFecalTests.assess (D001.legacyInput ctx) with
+  | none => simp
+  | some assessment =>
+    cases assessment with
+    | onlyMainD017 => simp
+    | requiresReference _ _ => simp
+    | charged charge =>
+      obtain ⟨⟨p, hp⟩, _⟩ := D001.determines ctx eligible
+      have eq := (D001.satisfies_iff ctx p).mp hp
+      rw [h] at eq
+      have hc : charge = ⟨p, 0⟩ := by simpa using eq.2
+      subst charge
+      simp
+
+private def Input.sediment (c : Input) : List (Performance UrineSediment.Method) :=
+  c.rows.filterMap fun p => match p.item with
+    | .sediment method => some { p with item := method }
+    | _ => none
+
+private def Input.fecal (c : Input) : List (Performance UrineFecalTests.Fecal) :=
+  c.rows.filterMap fun p => match p.item with
+    | .fecal i => some { p with item := i }
+    | _ => none
+
+private def sedimentContext (p : Performance UrineSediment.Method) : UrineSediment.Context :=
+  ⟨p, none, none, none, none, none, none, []⟩
+
+private def Input.sedimentGroups (c : Input) : Option (List ChoiceGroup) := do
+  match c.sediment with
+  | [] | [_] => some []
+  | [a, b] =>
+    if a.item = b.item then none else
+    if !(← c.sedimentPaired) then some [] else do
+      let (microscopy, flow) := if a.item = .microscopy then (a, b) else (b, a)
+      let group ← sedimentMethodGroup (sedimentContext microscopy) (sedimentContext flow)
+      return [group]
+  | _ => none
+
+private def sedimentCharge (ctx : UrineSediment.Context) : Option UrineFecalTests.Charge :=
+  match UrineFecalTests.assess (UrineSediment.legacyInput ctx.performance.item ctx false) with
+  | some (.charged charge) => some charge
+  | _ => none
+
+theorem sediment_projection (ctx : UrineSediment.Context)
+    (scope : UrineSediment.InScope ctx.performance.item ctx)
+    (isolatedFromD017 : ctx.d017 = some .noCombinedPerformance) (charge : UrineFecalTests.Charge) :
+    sedimentCharge ctx = some charge ↔
+      Satisfies (UrineSediment.resultRules ctx.performance.item) ctx (some charge) := by
+  have absent : ¬ UrineSediment.PreferD017 ctx := by
+    simp [UrineSediment.PreferD017, isolatedFromD017]
+  rw [UrineSediment.satisfies_iff]
+  simp [scope, UrineSediment.LegacyResult, UrineSediment.LegacyAssessment, absent]
+  unfold sedimentCharge
+  split <;> simp_all
+
+theorem fecal_projection (ctx : D003.Context) (eligible : D003.Eligible ctx) (points : Nat) :
+    UrineFecalTests.fecalPoints ctx.performance.item = points ↔ Satisfies D003.rules ctx points := by
+  rw [D003.satisfies_iff]
+  change _ ↔ D003.Eligible ctx ∧ some (UrineFecalTests.Assessment.charged ⟨_, 0⟩) = some (UrineFecalTests.Assessment.charged ⟨_, 0⟩)
+  simp [eligible]
+
+private def Input.punctureFluid (c : Input) : List (Performance D004.Item) :=
+  c.rows.filterMap fun p => match p.item with
+    | .punctureFluid i => some { p with item := i }
+    | _ => none
+
+theorem puncture_fluid_projection (ctx : D004.Context) (eligible : D004.Eligible ctx)
+    (points : Nat) : D004.scheduled ctx = some points ↔ Satisfies D004.rules ctx points := by
+  rw [D004.satisfies_iff, and_iff_right eligible]
+
+/-- 同じ同時実施群は最小の実施IDから一度だけ列挙する。 -/
+private def Input.renalGroups (c : Input) : Option (List ChoiceGroup) := do
+  let rows := c.specialUrine
+  let perRow ← rows.mapM fun p => renalSimultaneousGroup { performance := p } rows
+  let groups := (rows.zip perRow).flatMap fun (p, groups) =>
+    groups.filter fun g => g.members.all (p.id ≤ ·)
+  if groups.any (fun g =>
+      let items := (rows.filter fun p => g.members.contains p.id).map Performance.item
+      items.eraseDups.length != items.length) then none else some groups
 
 private def Input.coagulation (c : Input) : List (Performance D006.Item) :=
   c.rows.filterMap fun p => match p.item with
@@ -148,7 +282,9 @@ def Input.groups (c : Input) : Option (List ChoiceGroup) := do
           if same then (coagulationMarkerGroup markers).map (· :: []) else some []
         | _ => some []
       let alp ← c.alpGroups
-      return morphology.flatten ++ chemistry.flatten ++ coagulation ++ alp
+      let sediment ← c.sedimentGroups
+      let renal ← c.renalGroups
+      return morphology.flatten ++ chemistry.flatten ++ coagulation ++ alp ++ sediment ++ renal
 
 /-- 指定した採否が全群に共通し、各群の必要件数を満たす場合にだけ射影する。 -/
 def resolveChoices (groups : List ChoiceGroup) (selected : Option (List Nat)) :
@@ -190,6 +326,16 @@ private def Input.test (c : Input) (id : Nat) (test : SpecimenJudgment.Test)
 
 private def Input.tests (c : Input) (choices : List GroupChoice) : List DayTest :=
   (c.urine.map fun p => c.test p.performance.id D000.judgmentTest (some false)) ++
+  (c.specialUrine.map fun p =>
+    c.test p.id (D001.judgmentTest { performance := p })
+      (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
+  (c.sediment.map fun p => c.test p.id (UrineSediment.judgmentTest p.item)
+    (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
+  (c.fecal.map fun p =>
+    c.test p.id (D003.judgmentTest { performance := p, d017BacteriaOrProtozoa := none }) (some true)) ++
+  (c.punctureFluid.filterMap fun p =>
+    (c.punctureFluidFacts p).map fun (_, category) =>
+      c.test p.id (D004.judgmentTest p.item category) (some true)) ++
   (c.morphology.map fun p => c.test p.id (p.item.item.judgmentTest false)
     (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
   (c.chemistry.map fun p => c.test p.id (D007.Item.judgmentTest ⟨.draw, p.item⟩)
@@ -197,7 +343,11 @@ private def Input.tests (c : Input) (choices : List GroupChoice) : List DayTest 
       p.draw.bind fun draw => chemistryJudgmentCandidate p c.chemistry choices (c.drawFacts draw)
     else c.excludedJudgmentCandidate)) ++
   c.rows.filterMap (fun p =>
-    let test := match p.item with
+    let test : Option SpecimenJudgment.Test := match p.item with
+      | .tumorTissue .sensitivity =>
+        (c.tumorSensitivityFacts { p with item := .sensitivity }).map fun (_, category) =>
+          D004Tumor.judgmentTest .sensitivity category
+      | .tumorTissue i => some (D004Tumor.judgmentTest i .geneticChromosomal)
       | .coagulation i => some (D006.judgmentTest i)
       | .endocrine i => some (D008.judgmentTest i)
       | .alpPag => some (D007.Item.judgmentTest ⟨.late, .alpIsoenzymesPag⟩)
@@ -214,6 +364,8 @@ private def Input.tests (c : Input) (choices : List GroupChoice) : List DayTest 
 /-- 区分と採血IDから包括キーを求める。 -/
 def Input.assignment (p : Performance Item) : Option BundleKey :=
   match p.item with
+  | .tumorTissue .sensitivity => none
+  | .tumorTissue _ => bundleKey ⟨4, 2, .draw⟩ p
   | .chemistry _ => bundleKey ⟨7, 0, .draw⟩ p
   | .coagulation _ => bundleKey ⟨6, 0, .draw⟩ p
   | .endocrine _ => bundleKey ⟨8, 0, .draw⟩ p
@@ -231,6 +383,7 @@ theorem assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKe
   assigned_members_disjoint _ _ ha hb
 
 private def Item.extraBundle : Item → Bool
+  | .tumorTissue i => decide (i ≠ .sensitivity)
   | .coagulation _ | .endocrine _ | .tumorMarker _ | .hepatitis _ | .specificIge _
   | .viralTiter _ | .classTiter _ _ | .autoantibody _ => true
   | _ => false
@@ -265,6 +418,12 @@ private def Input.extraBundlePoints (c : Input) (choices : List GroupChoice) :
     | [] => some []
     | anchor :: _ =>
       match anchor.item with
+      | .tumorTissue _ =>
+        let typed := members.filterMap fun p => match p.item with
+          | .tumorTissue i => some ({ p with item := i } : Performance D004Tumor.Item)
+          | _ => none
+        let group ← c.tumorTissueGroup typed
+        return [(D004Tumor.groupPoints group.val).total]
       | .coagulation item =>
         let typed := members.filterMap fun p => match p.item with
           | .coagulation i => some ({ p with item := i } : Performance D006.Item)
@@ -341,7 +500,8 @@ private def Input.extraBundlePoints (c : Input) (choices : List GroupChoice) :
 private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
     Option (Day × List Nat) := do
   let ids := c.rows.map Performance.id
-  if !c.collectionHistoryConfirmed || c.collections.length > 1 ||
+  if decide (c.judgment.status ≠ .outpatient) ||
+      !c.collectionHistoryConfirmed || c.collections.length > 1 ||
       !c.collections.all (fun p => SpecimenCollection.isD400 p.item && !p.inpatient) ||
       !c.rows.all (fun p => p.item.supported && p.site == c.site &&
       c.eligible p.id == some true) || ids.eraseDups != ids || c.additions.site != c.site then none
@@ -354,6 +514,26 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
             !p.analytes.isEmpty && p.method.isSome &&
             (p.arrangement == some .direct || p.arrangement == some (.contracted (some true)))
         then some D000.points else none
+      let specialUrine ← (c.specialUrine.filter fun p => retained choices p.id).mapM fun p => do
+        let confirmed ← c.specialUrineFacts p
+        specialUrinePoints confirmed.val
+      let sediment ← (c.sediment.filter fun p => retained choices p.id).mapM fun p => do
+        let paired := choices.any fun choice =>
+          choice.group.source == UrineSediment.microscopySelectionRule.source &&
+          choice.group.members.contains p.id
+        let confirmed ← c.sedimentFacts p paired
+        (sedimentCharge confirmed.val).map UrineFecalTests.Charge.total
+      let fecal ← c.fecal.mapM fun p => do
+        let confirmed ← c.fecalFacts p
+        return UrineFecalTests.fecalPoints confirmed.val.performance.item
+      let punctureFluid ← c.punctureFluid.mapM fun p => do
+        let (confirmed, _) ← c.punctureFluidFacts p
+        D004.scheduled confirmed.val
+      let sensitivity ← (c.rows.filterMap fun p => match p.item with
+        | .tumorTissue .sensitivity => some ({ p with item := .sensitivity } : Performance D004Tumor.Item)
+        | _ => none).mapM fun p => do
+          let _ ← c.tumorSensitivityFacts p
+          return D004Tumor.Item.sensitivity.points
       let morphology ← c.morphologyPoints choices
       let draws ← c.chemistryDraws choices
       let extra ← c.extraBundlePoints choices
@@ -362,7 +542,7 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
           if retained choices p.id then some (BloodChemistryLate.Item.points .alpIsoenzymesPag) else none
         | _ => none
       let execution := (draws.map fun (_, items) => BloodChemistry.pointsForItems items) ++
-        morphology ++ urine ++ extra ++ pag
+        morphology ++ urine ++ specialUrine ++ sediment ++ fecal ++ punctureFluid ++ sensitivity ++ extra ++ pag
       let day ← Day.withTests ⟨[], [], c.judgment, c.additions⟩
         (c.tests choices)
       let _ ← day.judgment.points
@@ -371,6 +551,11 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
 def Input.prepare (c : Input) (selected : Option (List Nat)) : Option (Day × List Nat) :=
   (c.prepareFacts selected).map fun (day, execution) =>
     ({ day with execution := execution.map fixedCharge }, execution)
+
+theorem tumor_tissue_projection (g : D004Tumor.Group) (valid : g.Valid)
+    (points : D004Tumor.GroupResult) :
+    Satisfies D004Tumor.groupRules g points ↔ points = D004Tumor.groupPoints g := by
+  rw [D004Tumor.group_satisfies_iff, and_iff_right valid]
 
 private theorem prepare_execution {c : Input} {selected : Option (List Nat)} {prep : Day}
     {execution : List Nat} (h : c.prepare selected = some (prep, execution)) :
@@ -535,6 +720,168 @@ private def base : Input where
   emergency := fun _ => none
   rapid := fun _ => none
 
+private def urineDaySite : Site := ⟨1, 2, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩
+
+private def urineDayBase : Input :=
+  { base with
+    judgment := { base.judgment with day := ⟨urineDaySite, [], false,
+      ⟨⟨urineDaySite.monthScope, []⟩, by simp⟩, ⟨urineDaySite.monthScope, []⟩⟩ }
+    additions := { base.additions with site := urineDaySite } }
+
+private def urineProtein : Performance UrineFecalTests.UrineSpecial :=
+  { id := 1, site := urineDaySite, item := .protein, specimen := some 1 }
+
+private theorem urineProteinEligible : D001.Eligible { performance := urineProtein } := by
+  simp [D001.Eligible, Satisfies, D001.conditions, D001.screeningRule, D001.porphyriaRule,
+    D001.renalRule, D001.trypsinogenRule, D001.pancreaticRule, D001.myoinositolRule,
+    D001.pgeRule, D001.colitisRule, D001.oxalateRule, D001.lfabpRule, D001.ngalRule,
+    D001.lfabpNgalRule, D001.stripRatioRule, D001.trypsinogenParagraph, D001.pgeParagraph,
+    D001.ngalParagraph, D001.ReferenceResolved, D001.RenalItem, urineProtein]
+  repeat' first | apply And.intro | exact True.intro | rfl | (intro h; contradiction)
+
+private def stool : Performance UrineFecalTests.Fecal :=
+  { id := 2, site := urineDaySite, item := .lipids, specimen := some 2 }
+
+private theorem stoolEligible : D003.Eligible
+    { performance := stool, d017BacteriaOrProtozoa := some false } := by
+  simp [D003.Eligible, Satisfies, D003.conditions, D003.d017Rule, D003.qualitativeRule,
+    D003.quantitativeRule, D003.purposeRule, D003.diagnosisRule, D003.monitoringRule,
+    D003.colonoscopyRule, D003.urinaryPgeSelectionRule, D003.HemoglobinItem, stool]
+  repeat' first | apply And.intro | exact True.intro | rfl | (intro h; contradiction)
+
+private def urineAndStool : Input :=
+  { urineDayBase with
+    rows := [{ urineProtein with item := .specialUrine .protein }, { stool with item := .fecal .lipids }]
+    specialUrineFacts := fun p => if h : urineProtein = p then
+      some ⟨{ performance := urineProtein }, h, urineProteinEligible⟩ else none
+    fecalFacts := fun p => if h : stool = p then
+      some ⟨{ performance := stool, d017BacteriaOrProtozoa := some false }, h, stoolEligible⟩ else none }
+
+example : (urineAndStool.withoutAdditions none).map (fun r => (r.execution, r.judgment)) =
+    some ([7, 25], 34) := by decide
+
+example : ({ urineAndStool with specialUrineFacts := fun _ => none }.withoutAdditions none) =
+    none := by decide
+
+private def microscopyRow : Performance UrineSediment.Method :=
+  { id := 3, site := urineDaySite, item := .microscopy, specimen := some 3 }
+
+private def microscopyContext : UrineSediment.Context :=
+  { sedimentContext microscopyRow with
+    indication := some .medicallyNecessaryOnExamination
+    location := some .directInHouse
+    d017 := some .noCombinedPerformance
+    otherSedimentPerformed := some false
+    stained := some true }
+
+private def punctureRow : Performance D004.Item :=
+  { id := 4, site := urineDaySite, item := .huhner, specimen := some 4 }
+
+private def microscopyAndPuncture : Input :=
+  { urineAndStool with
+    rows := urineAndStool.rows ++
+      [{ microscopyRow with item := .sediment .microscopy },
+       { punctureRow with item := .punctureFluid .huhner }]
+    sedimentFacts := fun p paired =>
+      if hp : microscopyRow = p then
+        if hb : paired = false then
+          some ⟨microscopyContext, hp, rfl, congrArg some hb.symm, by
+            subst p
+            exact ⟨rfl, trivial, .inl rfl, .inl rfl, .inl rfl, rfl⟩⟩
+        else none
+      else none
+    punctureFluidFacts := fun p =>
+      if h : p.item = .huhner then
+        some (⟨{ item := .huhner }, h.symm, D004.huhner_eligible⟩, .urineFecal)
+      else none }
+
+example : (microscopyAndPuncture.withoutAdditions none).map Breakdown.execution =
+    some [7, 36, 25, 20] := by decide
+
+private def flowRow : Performance UrineSediment.Method :=
+  { id := 5, site := urineDaySite, item := .flow, specimen := some 3, simultaneous := some 2 }
+
+private def flowMeasurements : List (Performance UrineSediment.FlowComponent) :=
+  [UrineSediment.FlowComponent.redCells, .whiteCells, .epithelialCells, .casts, .bacteria].map
+    (fun component => { flowRow with item := component })
+
+private def flowContext (paired : Bool) : UrineSediment.Context :=
+  { sedimentContext flowRow with
+    indication := some .medicallyNecessaryOnExamination
+    location := some .directInHouse
+    d017 := some .noCombinedPerformance
+    otherSedimentPerformed := some paired
+    chosenSedimentMethod := some .flow
+    flowMeasurements }
+
+private theorem flowInScope (paired : Bool) : UrineSediment.InScope .flow (flowContext paired) := by
+  refine ⟨rfl, trivial, .inl rfl, ?_, .inl rfl, ?_⟩
+  · cases paired
+    · exact .inl rfl
+    · exact .inr ⟨rfl, rfl⟩
+  · intro component
+    refine ⟨{ flowRow with item := component }, ?_, rfl, rfl⟩
+    cases component <;> simp [flowContext, flowMeasurements]
+
+private def pairedSediment : Input :=
+  { microscopyAndPuncture with
+    rows := microscopyAndPuncture.rows ++ [{ flowRow with item := .sediment .flow }]
+    sedimentFacts := fun p paired =>
+      if hp : flowRow = p then
+        some ⟨flowContext paired, hp, rfl, rfl, hp ▸ flowInScope paired⟩
+      else microscopyAndPuncture.sedimentFacts p paired }
+
+example :
+    let paired := { pairedSediment with sedimentPaired := some true }
+    pairedSediment.groups = none ∧
+      paired.groups.map (List.map ChoiceGroup.members) = some [[3, 5]] ∧
+      (paired.prepare none).isNone ∧
+      (paired.withoutAdditions (some [5])).map Breakdown.execution = some [7, 24, 25, 20] := by decide
+
+example :
+    let rows : List (Performance Item) :=
+      [{ id := 1, site := urineDaySite, item := .specialUrine .transferrin, simultaneous := some 1 },
+       { id := 2, site := urineDaySite, item := .specialUrine .albuminQuantitative, simultaneous := some 1 }]
+    let c := { urineDayBase with rows }
+    c.groups.map (List.map ChoiceGroup.members) = some [[1, 2]] ∧
+      ({ c with rows := rows.map fun r => { r with simultaneous := none } } : Input).groups.isNone := by decide
+
+private def sensitivityRow : Performance D004Tumor.Item :=
+  { id := 6, site := urineDaySite, item := .sensitivity, specimen := some 5 }
+
+private def sensitivityContext : D004Tumor.Classified :=
+  { test := { performance := sensitivityRow
+              cancer := .breast
+              purpose := .solidCancerDrugSelection
+              method := some .hdra
+              surgicalTissue := some true
+              cytotoxicDrug := some true
+              priorClaims := some { coverage := ⟨1, none, Period.through urineDaySite.date⟩
+                                    entries := [], distinctIds := by simp } }
+    branch := none }
+
+private theorem sensitivityEligible : D004Tumor.Eligible sensitivityContext := by
+  simp [D004Tumor.Eligible, D004Tumor.eligibilityRules, satisfies_cons, satisfies_nil,
+    D004Tumor.geneRule, D004Tumor.hematologicRule, D004Tumor.egfrRule, D004Tumor.alkRule,
+    D004Tumor.her2Rule, D004Tumor.brcaRule, D004Tumor.sensitivityRule, D004Tumor.cytotoxicRule,
+    D004Tumor.lynchMsiRule, D004Tumor.drugAidRule, D004Tumor.otherSimpleRule,
+    D004Tumor.complexRule, D004Tumor.branchRule]
+  repeat' first | apply And.intro | exact True.intro | rfl | (intro h; contradiction)
+  all_goals intro h
+  · rcases h.1 with a | a | a <;> contradiction
+  · exact ⟨by decide, rfl, ⟨.hdra, by simp, rfl⟩, rfl, rfl⟩
+  · rfl
+  · intro impossible
+    cases impossible
+
+example :
+    let c : Input := { urineAndStool with
+      rows := urineAndStool.rows ++ [{ sensitivityRow with item := .tumorTissue .sensitivity }]
+      tumorSensitivityFacts := fun p =>
+        if h : sensitivityRow = p then some (⟨sensitivityContext, h, sensitivityEligible⟩, .biochemicalII)
+        else none }
+    (c.withoutAdditions none).map Breakdown.execution = some [7, 25, 2500] := by decide
+
 private def chemistryRows (items : List BloodChemistry.Item) : List (Performance Item) :=
   items.zipIdx.map fun (i, j) =>
     { id := j + 10, site, item := .chemistry i, draw := some 1, simultaneous := some 1 }
@@ -597,6 +944,31 @@ example :
       (multiDivision.withoutAdditions (some [1, 20, 33])).map Breakdown.judgment,
       total multiDivision (some [1, 20, 33])) =
     (some 3, some 413, some 1479) := by decide
+
+private def mixedRawDay : Input :=
+  { urineAndStool with
+    rows := urineAndStool.rows ++
+      (multiDivision.rows.filter (fun p => p.id != 1 && p.id != 2)).map
+        (fun p => { p with site := urineDaySite }) ++
+      [{ id := 70, site := urineDaySite, item := .alpPag, draw := some 1 },
+       { id := 71, site := urineDaySite, item := .endocrine .bap, draw := some 1 }]
+    alpPaired := some true
+    collections := raw429.collections }
+
+example :
+    (mixedRawDay.withoutAdditions (some [20, 33, 70])).map
+      (fun r => (r.execution, r.judgment, r.collection, r.total.specimenWithCollection)) =
+    some ([93, 26, 7, 25, 600, 290, 180], 447, [40], 1708) := by decide
+
+example : (mixedRawDay.withoutAdditions none).isNone := by decide
+
+example : ({ mixedRawDay with collections :=
+      [{ item := .venousBlood }, { item := .otherBlood }] }.withoutAdditions (some [20, 33, 70])).isNone :=
+  by decide
+
+example :
+    let inpatient := { urineAndStool with judgment := { urineAndStool.judgment with status := .inpatient } }
+    (inpatient.withoutAdditions none).isNone := by decide
 
 example :
     (multiDivision.prepare (some [1, 20, 33])).map (fun (day, _) =>

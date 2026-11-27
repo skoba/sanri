@@ -102,6 +102,35 @@ def AdditionContext.rapidCandidates (c : AdditionContext) (prior : List Nat) : L
   ((c.rapidTests.filter RapidTest.eligible).map RapidTest.item).eraseDups.filter
     (fun item => !prior.contains item)
 
+private theorem deduplicatedItems_nodup (items : List Nat) : items.eraseDups.Nodup := by
+  have loop (remaining seen : List Nat) (distinct : seen.Nodup) :
+      (List.eraseDupsBy.loop (· == ·) remaining seen).Nodup := by
+    induction remaining generalizing seen with
+    | nil => simpa [List.eraseDupsBy.loop] using distinct.perm (List.reverse_perm seen).symm
+    | cons item rest ih =>
+      cases found : seen.any (item == ·)
+      · rw [List.eraseDupsBy.loop, found]
+        apply ih
+        refine List.nodup_cons.mpr ⟨?_, distinct⟩
+        intro member
+        have existsTrue : seen.any (item == ·) = true :=
+          List.any_eq_true.mpr ⟨item, member, by simp⟩
+        simp [found] at existsTrue
+      · rw [List.eraseDupsBy.loop, found]
+        exact ih seen distinct
+  exact loop items [] List.nodup_nil
+
+/-- 迅速加算の項目候補は、当日先行算定を固定すれば、実施順を変えても同じ多重集合になる。 -/
+theorem AdditionContext.rapidCandidates_perm (c : AdditionContext) {tests : List RapidTest}
+    (h : c.rapidTests.Perm tests) (prior : List Nat) :
+    (c.rapidCandidates prior).Perm ({ c with rapidTests := tests }.rapidCandidates prior) := by
+  unfold rapidCandidates
+  have before := (h.filter RapidTest.eligible).map RapidTest.item
+  apply (List.perm_ext_iff_of_nodup ((deduplicatedItems_nodup _).filter _)
+    ((deduplicatedItems_nodup _).filter _)).mpr
+  intro item
+  simp only [List.mem_filter, List.mem_eraseDups, before.mem_iff]
+
 structure AdditionResult where
   emergency : Nat
   rapid : Nat
@@ -152,6 +181,14 @@ def EmergencyConfirmed (c : AdditionContext) : Prop :=
     emergencyStart.holds (c, t) ⟨0, 0⟩ ∧ emergencyOutpatient.holds (c, t) ⟨0, 0⟩ ∧
     emergencyUrgency.holds (c, t) ⟨0, 0⟩
 
+/-- 緊急性・時間帯等の証拠は、同じ検査の実施一覧を並べ替えても保たれる。 -/
+theorem emergencyConfirmed_perm (c : AdditionContext) {tests : List EmergencyTest}
+    (h : c.emergencyTests.Perm tests) :
+    EmergencyConfirmed { c with emergencyTests := tests } ↔ EmergencyConfirmed c := by
+  simp only [EmergencyConfirmed, emergencyEligibility, emergencyStart, emergencyOutpatient,
+    emergencyUrgency]
+  simp only [h.mem_iff]
+
 def rapidPlace : Rule AdditionContext AdditionResult :=
   ⟨"notice/ch2-part3-section1-subsection1/rapid/1", notice "PDF330頁 外来迅速検体検査加算(1)",
     fun c r => c.selection = .rapid →
@@ -179,6 +216,16 @@ def rapidOutpatient : Rule (RapidTest × Bool) Unit :=
 def additionRules : List (Rule AdditionContext AdditionResult) :=
   [emergencyPrimary, rapidPrimary, emergencyOnce, emergencyNightExclusion, rapidBundle,
     rapidDailyLimit, rapidConsultationBundle]
+
+/-- 検査一覧だけの並べ替えでは、加算の点数制約を満たす結果は変わらない。 -/
+theorem additionRules_rapid_perm (c : AdditionContext) {tests : List RapidTest}
+    (h : c.rapidTests.Perm tests) (result : AdditionResult) :
+    Satisfies additionRules { c with rapidTests := tests } result ↔
+      Satisfies additionRules c result := by
+  have counts (prior : List Nat) := (c.rapidCandidates_perm h prior).length_eq
+  simp [additionRules, satisfies_cons, satisfies_nil, emergencyPrimary, rapidPrimary,
+    emergencyOnce, emergencyNightExclusion, rapidBundle, rapidDailyLimit, rapidConsultationBundle,
+    ← counts]
 
 theorem additions_determine (c : AdditionContext)
     (emergency : c.selection = .emergency → EmergencyConfirmed c ∧

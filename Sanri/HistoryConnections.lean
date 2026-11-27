@@ -417,6 +417,20 @@ def OutpatientDay.points (c : OutpatientDay) : Option Nat :=
     (if c.marrow.isSome then marrowPoints else 0) +
     (if c.electrophoresis.isSome then electrophoresisPoints else 0)
 
+/-- D026の月内履歴等を固定したとき、当日の候補の順序で点数は変わらない。 -/
+theorem OutpatientDay.points_perm (c : OutpatientDay) {tests : List IncludedTest}
+    (h : c.day.tests.Perm tests) :
+    ({ c with day := { c.day with tests } } : OutpatientDay).points = c.points := by
+  have coverage : ({ c.day with tests } : DailyJudgment).coverageResolved = c.day.coverageResolved :=
+    h.all_eq.symm
+  have categories : ({ c.day with tests } : DailyJudgment).categories = c.day.categories := by
+    unfold DailyJudgment.categories
+    congr 1
+    funext category
+    unfold DailyJudgment.selectable DailyJudgment.hasTest
+    simp [h.any_eq, DailyJudgment.previousClaimLimit, DailyJudgment.firstDay]
+  simp [OutpatientDay.points, DailyJudgment.points, coverage, categories]
+
 theorem outpatient_day_iff (c : OutpatientDay) (hc : c.Eligible) (points : Nat) :
     c.PermitsPoints points ↔ c.points = some points := by
   obtain ⟨_, _, hk, hm, hb, he⟩ := hc

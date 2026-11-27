@@ -203,7 +203,7 @@ def mixedD400 (contexts : List Context) : Bool :=
   (contexts.any fun c => c.item == .venousBlood) &&
     (contexts.any fun c => c.item == .otherBlood)
 
-private def sameLimitedFrame (a b : Context) : Bool :=
+def sameLimitedFrame (a b : Context) : Bool :=
   a.item == b.item && (isDaily a.item || (isSeries a.item && a.seriesId == b.seriesId))
 
 private def conflictingCharge (a b : Context) : Bool :=
@@ -215,19 +215,22 @@ private def conflictingCharge (a b : Context) : Bool :=
 def conflictingLimitedCharges (contexts : List Context) : Bool :=
   contexts.any fun a => contexts.any (conflictingCharge a)
 
+private def dayStep (state : List Context × List Assessment) (original : Context) :
+    Option (List Context × List Assessment) := do
+  let c := { original with
+    dailyAlreadyClaimed := original.dailyAlreadyClaimed || state.1.any (fun x =>
+      decide (x.item = original.item))
+    seriesAlreadyClaimed := original.seriesAlreadyClaimed || state.1.any (fun x =>
+      decide (x.item = original.item ∧ x.seriesId = original.seriesId)) }
+  let a ← assess c
+  let charged := if a.notSeparate.isNone then state.1 ++ [c] else state.1
+  some (charged, state.2 ++ [a])
+
 /-- 同一日・同一患者の一覧。異方式のＤ４００を含む日の本体点数は保留する。 -/
 def assessDay (contexts : List Context) : Option (List Assessment) := do
   if mixedD400 contexts then none else
     if conflictingLimitedCharges contexts then none else
-      let result ← contexts.foldlM (fun (state : List Context × List Assessment) original => do
-          let c := { original with
-            dailyAlreadyClaimed := original.dailyAlreadyClaimed || state.1.any (fun x =>
-              decide (x.item = original.item))
-            seriesAlreadyClaimed := original.seriesAlreadyClaimed || state.1.any (fun x =>
-              decide (x.item = original.item ∧ x.seriesId = original.seriesId)) }
-          let a ← assess c
-          let charged := if a.notSeparate.isNone then state.1 ++ [c] else state.1
-          some (charged, state.2 ++ [a])) ([], [])
+      let result ← contexts.foldlM dayStep ([], [])
       some result.2
 
 theorem mixedD400_perm {xs ys : List Context} (h : xs.Perm ys) :
@@ -254,6 +257,133 @@ theorem assessDay_conflicting_perm {xs ys : List Context} (h : xs.Perm ys)
   have conflict' : conflictingLimitedCharges ys = true :=
     (conflictingLimitedCharges_perm h).symm.trans conflict
   simp [assessDay, conflict, conflict']
+
+/-- 前の実施が日次・一連の枠を共有しない場合、単独評価と等しい。 -/
+private theorem assess_with_unrelated_charges (charged : List Context) (original : Context)
+    (separate : ∀ x ∈ charged, sameLimitedFrame x original = false) :
+    assess { original with
+      dailyAlreadyClaimed := original.dailyAlreadyClaimed || charged.any (fun x =>
+        decide (x.item = original.item))
+      seriesAlreadyClaimed := original.seriesAlreadyClaimed || charged.any (fun x =>
+        decide (x.item = original.item ∧ x.seriesId = original.seriesId)) } = assess original := by
+  have daily : isDaily original.item = true →
+      charged.any (fun x => decide (x.item = original.item)) = false := by
+    intro hd
+    apply List.any_eq_false.mpr
+    intro x hx same
+    have eq := of_decide_eq_true same
+    simpa [sameLimitedFrame, eq, hd] using separate x hx
+  have series : isSeries original.item = true →
+      charged.any (fun x => decide (x.item = original.item ∧ x.seriesId = original.seriesId)) = false := by
+    intro hs
+    apply List.any_eq_false.mpr
+    intro x hx same
+    obtain ⟨item, id⟩ := of_decide_eq_true same
+    simpa [sameLimitedFrame, item, id, hs] using separate x hx
+  cases hd : isDaily original.item <;> cases hs : isSeries original.item
+  all_goals try rw [daily hd]
+  all_goals try rw [series hs]
+  all_goals simp [assess, notSeparateReason, eligible, hd, hs]
+
+private theorem sameLimitedFrame_flags (x a : Context) (daily series : Bool) :
+    sameLimitedFrame { x with dailyAlreadyClaimed := daily, seriesAlreadyClaimed := series } a =
+      sameLimitedFrame x a := rfl
+
+private theorem fold_distinct_frames (remaining : List Context) (charged : List Context)
+    (entries : List Assessment)
+    (separate : remaining.Pairwise (fun a b => sameLimitedFrame a b = false))
+    (prior : ∀ a ∈ charged, ∀ b ∈ remaining, sameLimitedFrame a b = false) :
+    (remaining.foldlM dayStep (charged, entries)).map Prod.snd =
+      (remaining.mapM assess).map (entries ++ ·) := by
+  induction remaining generalizing charged entries with
+  | nil => simp
+  | cons a rest ih =>
+    rw [List.pairwise_cons] at separate
+    have unmodified := assess_with_unrelated_charges charged a
+      (fun x hx => prior x hx a (by simp))
+    rw [List.foldlM_cons, List.mapM_cons]
+    let updated := { a with
+      dailyAlreadyClaimed := a.dailyAlreadyClaimed || charged.any (fun x => decide (x.item = a.item))
+      seriesAlreadyClaimed := a.seriesAlreadyClaimed || charged.any (fun x =>
+        decide (x.item = a.item ∧ x.seriesId = a.seriesId)) }
+    have step : dayStep (charged, entries) a = (assess a).map
+        (fun assessment => (if assessment.notSeparate.isNone then charged ++ [updated] else charged,
+          entries ++ [assessment])) := by
+      change (assess updated).bind _ = _
+      have hu : assess updated = assess a := unmodified
+      rw [hu]
+      cases assess a <;> rfl
+    rw [step]
+    cases price : assess a with
+    | none => rfl
+    | some assessment =>
+      by_cases chargedNow : assessment.notSeparate.isNone = true
+      · simp only [Option.map_some, chargedNow, ite_true, bind, Option.bind]
+        rw [ih _ _ separate.2]
+        · cases rest.mapM assess <;> simp [List.append_assoc]
+        · intro x hx y hy
+          rcases List.mem_append.mp hx with hx | hx
+          · exact prior x hx y (by simp [hy])
+          · obtain rfl := List.mem_singleton.mp hx
+            exact separate.1 y hy
+      · simp only [Option.map_some, chargedNow, Bool.false_eq_true, ite_false, bind, Option.bind]
+        rw [ih _ _ separate.2 (fun x hx y hy => prior x hx y (by simp [hy]))]
+        cases rest.mapM assess <;> simp [List.append_assoc]
+
+private theorem mapM_assess_perm {xs ys : List Context} {assessments : List Assessment}
+    (h : xs.Perm ys) (ok : xs.mapM assess = some assessments) :
+    ∃ other, ys.mapM assess = some other ∧ assessments.Perm other := by
+  induction h generalizing assessments with
+  | nil => exact ⟨assessments, ok, .refl _⟩
+  | @cons x left right _ ih =>
+    cases hx : assess x with
+    | none => simp [List.mapM_cons, hx] at ok
+    | some a =>
+      cases ht : left.mapM assess with
+      | none => simp [List.mapM_cons, hx, ht] at ok
+      | some tail =>
+        have eq : a :: tail = assessments := by
+          simpa [List.mapM_cons, hx, ht] using ok
+        subst assessments
+        obtain ⟨other, out, perm⟩ := ih ht
+        exact ⟨a :: other, by simp [List.mapM_cons, hx, out], perm.cons a⟩
+  | swap x y tail =>
+    cases hx : assess x <;> cases hy : assess y <;> cases ht : tail.mapM assess <;>
+      simp_all [List.mapM_cons]
+    rw [← ok]
+    exact .swap ..
+  | trans _ _ ih₁ ih₂ =>
+    obtain ⟨mid, eq, hmid⟩ := ih₁ ok
+    obtain ⟨out, eq', hout⟩ := ih₂ eq
+    exact ⟨out, eq', hmid.trans hout⟩
+
+/-- 異方式D400の保留判定を維持し、日次・一連の枠を共有しない採取の内訳を並べ替えられる。 -/
+theorem assessDay_perm_of_distinct_frames {xs ys : List Context} {assessments : List Assessment}
+    (h : xs.Perm ys)
+    (separate : xs.Pairwise (fun a b => sameLimitedFrame a b = false))
+    (ok : assessDay xs = some assessments) :
+    ∃ other, assessDay ys = some other ∧ assessments.Perm other := by
+  have symmetric : ∀ {a b : Context}, sameLimitedFrame a b = false → sameLimitedFrame b a = false := by
+    intro a b neq
+    by_cases item : a.item = b.item
+    · by_cases series : a.seriesId = b.seriesId <;>
+        simpa [sameLimitedFrame, item, series, Ne.symm] using neq
+    · simp [sameLimitedFrame, Ne.symm item]
+  have sepY := (h.pairwise_iff symmetric).mp separate
+  have mixed : mixedD400 xs = false := by
+    cases eh : mixedD400 xs <;> simp_all [assessDay]
+  have conflict : conflictingLimitedCharges xs = false := by
+    cases eh : conflictingLimitedCharges xs <;> simp_all [assessDay]
+  have evaluation (rows : List Context) (distinct : rows.Pairwise (fun a b => sameLimitedFrame a b = false))
+      (m : mixedD400 rows = false) (c : conflictingLimitedCharges rows = false) :
+      assessDay rows = rows.mapM assess := by
+    have fold := fold_distinct_frames rows [] [] distinct (by simp)
+    cases hf : rows.foldlM dayStep ([], []) <;> cases hm : rows.mapM assess <;>
+      simp_all [assessDay]
+  rw [evaluation xs separate mixed conflict] at ok
+  rw [evaluation ys sepY ((mixedD400_perm h).symm.trans mixed)
+    ((conflictingLimitedCharges_perm h).symm.trans conflict)]
+  exact mapM_assess_perm h ok
 
 /-- 検査通則の第４節に引き渡す。別算定しない採取を種類数に含めない。
 Ｅ４００のフィルムは第４節の置換対象に混ぜず、呼出元で別に合算する。 -/
