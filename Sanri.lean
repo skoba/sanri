@@ -89,5 +89,7 @@ import Sanri.Logic
 import Sanri.History
 import Sanri.HistoryConnections
 import Sanri.CaseStudies.ResidualUrine
+import Sanri.CaseStudies.GlycemicTables
+import Sanri.CaseStudies.PunctureAgeTables
 import Sanri.CaseStudies.FilingClarification
 import Sanri.CaseStudies.OutpatientBloodTests

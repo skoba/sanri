@@ -124,6 +124,8 @@ def clause_paths(rule: dict) -> list[tuple[str, ...]]:
     if rule.get("classification") == "parameterized" or identifier.startswith("unclassified/"):
         return []
     expected = _KIND_PREFIX.get(rule.get("kind"))
+    if rule.get("kind") in {"electronicTable", "manualInterpretation"}:
+        return []
     result = []
     for reference in identifier.split("+"):
         parts = tuple(reference.split("/"))

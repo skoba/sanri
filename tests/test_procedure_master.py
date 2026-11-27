@@ -19,7 +19,8 @@ def synthetic(code="199000110", cells=None) -> list[str]:
     defaults = {1: "0", 2: "S", 3: code, 5: "合成検査", 11: "3", 12: "12.00", 13: "0",
                 68: "1", 69: "1", 85: "D", 86: "", 87: "20260601", 88: "99999999",
                 90: "2", 91: "03", 92: "901", 93: "00", 94: "001",
-                95: "0", 96: "00", 97: "000", 98: "00", 99: "00"}
+                95: "0", 96: "00", 97: "000", 98: "00", 99: "00",
+                **{i + offset: "00" for i in range(100, 112, 3) for offset in (0, 1)}}
     for number, value in {**defaults, **(cells or {})}.items():
         row[number - 1] = value
     return row

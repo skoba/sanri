@@ -149,6 +149,21 @@ git check-ignore tensuhyo/inventory/clause-ledger.json
 
 照合レポートはGit管理外の `tensuhyo/inventory/clause-ledger.json` にのみ保存します。区分別の状態、出典種別別の参照パス数、未分類一覧、区分・項番別の点数集合の一致・不一致と片側のみの行を含みます。本文の項・注の分母を取得できない区分は `null` で示します。点数比較では準用行を集計から分け、注加算を別種別として照合します。マスターの項番だけでは検査種類・枝・9桁コードを一意に対応付けられないため、一致は比較キーごとの点数集合に限ります。[条項IDの書式](../docs/tensuhyo-schema.md#公開leanモデルの条項id)
 
+## 検体検査の外部照合を再生成する
+
+基準診療日は2026-10-22。登録版の診療行為マスター、電子点数表、留意事項通知PDFと `inventory/` のマスター・通知・検体検査索引を用意します。
+
+```sh
+python3 -m tools.audit_specimen
+git check-ignore tensuhyo/inventory/specimen-external-audit.json
+```
+
+同じ作業ツリーで `lake env lean tools/FeeLedger.lean > tensuhyo/inventory/specimen-lean-ledger.json` を実行し、`python3 -m tools.audit_specimen --lean-ledger specimen-lean-ledger.json` でLean台帳を再利用できます。
+
+`tensuhyo/inventory/specimen-reviewed-names.json` は任意のローカルレビュー入力です。配列の各要素に `division`、Lean台帳の整数 `number`、NFKC正規化した名称からLean項目名への `names` を記録します。構造と点数が一致する複数候補を原文で確認した場合に登録します。この絞り込みを要するコードはファイルがなければ未確定になります。
+
+出力は `tensuhyo/inventory/specimen-external-audit.json` です。対応理由、マスター・電子表の行位置、条項候補、準用の出典探索、双方向の部分照合結果を含みます。公式行、名称レビュー入力と出力はローカルに保持します。[検証状況](../docs/validation-status.md#検体検査の外部照合工程3a-5)
+
 ## 残尿測定の限定的なCSV照合
 
 リポジトリのルートから実行します。対象コード・診療日・本文の共有上限と出典は、呼出元が確認して明示する入力です。スクリプト自身が本文やコード対応を公的資料から証明するわけではありません。

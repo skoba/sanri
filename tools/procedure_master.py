@@ -92,11 +92,16 @@ class Record:
     branch: str
     item: int
     ref_alpha: str
+    ref_chapter: int
+    ref_part: int
     ref_number: str
     ref_branch: str
     ref_item: int
     changed_on: date
     abolished_on: date
+    facility_codes: tuple[int, ...]
+    age_additions: tuple[tuple[str, str, int], ...]
+    addition_key: tuple[int, str]
 
     @property
     def points(self) -> Fraction:
@@ -151,11 +156,17 @@ def parse_row(row: list[str]) -> Record:
         branch=cell(93, r"[0-9]{2}"),
         item=int(cell(94, r"[0-9]{3}")),
         ref_alpha=cell(86, r"[A-Z]?"),
+        ref_chapter=int(cell(95, r"[0-9]")),
+        ref_part=int(cell(96, r"[0-9]{2}")),
         ref_number=cell(97, r"[0-9]{3}"),
         ref_branch=cell(98, r"[0-9]{2}"),
         ref_item=int(cell(99, r"[0-9]{2}")),
         changed_on=changed,
         abolished_on=abolished,
+        facility_codes=tuple(int(cell(i, r"[0-9]{1,4}")) for i in range(72, 82)),
+        age_additions=tuple((cell(i, r"[0-9]{2}|AA|B[36FK]"), cell(i + 1, r"[0-9]{2}|AA|AE|B[36FK]|MG"),
+                             int(cell(i + 2, r"0|1[0-9]{8}"))) for i in range(100, 112, 3)),
+        addition_key=(int(cell(38, r"[0-9]{1,4}")), cell(39, r"[A-Z0-9]")),
     )
 
 

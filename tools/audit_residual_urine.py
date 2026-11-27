@@ -109,7 +109,8 @@ def active(row: list[str], on: date) -> bool:
     return record_date(row[-2]) <= on <= record_date(row[-1], end=True)
 
 
-def load_snapshot(snapshot: Path, codes: set[str], as_of: date) -> dict:
+def load_snapshot(snapshot: Path, codes: set[str], as_of: date, *,
+                  cross_references: bool = False) -> dict:
     """Validate all eight CSVs, retaining only evidence for the supplied codes."""
     snapshot = snapshot.resolve()
     manifest_path = snapshot / "sources.json"
@@ -160,9 +161,12 @@ def load_snapshot(snapshot: Path, codes: set[str], as_of: date) -> dict:
                 except AuditError as error:
                     raise AuditError(f"{relative}:{line}: {error}") from error
                 relevant = (
-                    row[1] in codes if kind in {"auxiliary", "frequency"}
-                    else row[1] in codes and row[3] in codes if kind.startswith("exclusion_")
-                    else False
+                    row[1] in codes or cross_references if kind == "auxiliary"
+                    else row[1] in codes if kind == "frequency"
+                    else cross_references if kind == "inclusion"
+                    else (row[1] in codes or row[3] in codes) if cross_references
+                    and kind.startswith("exclusion_")
+                    else kind.startswith("exclusion_") and row[1] in codes and row[3] in codes
                 )
                 if relevant:
                     try:

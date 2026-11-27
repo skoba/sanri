@@ -125,6 +125,10 @@ private unsafe def points : MetaM (List Json) := do
           some <$> evalNat ``BloodChemistryAdditional.Item.points item
         else if scope.isConstOf ``D007.Scope.late then
           some <$> evalNat ``BloodChemistryLate.Item.points item
+        else if scope.isConstOf ``D007.Scope.glycemic then
+          pure (some (if ctor == ``D007.ScopedItem.glycatedAlbumin then
+            (GlycemicTests.Item.glycatedAlbumin none).points
+            else GlycemicTests.Item.anhydroglucitol.points))
         else continue -- 同じ項目は further に含まれる。
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
@@ -260,6 +264,11 @@ private unsafe def points : MetaM (List Json) := do
     pointRow "D008" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
   let endocrineBundle := [410, 623, 900].map fun p =>
     pointRow "D008" ("bundle" ++ toString p) "note" 0 0 (some p)
+  let remote := [1, 2].map fun n =>
+    pointRow "D000" ("remote/" ++ toString n) "remote" 0 0 (some (Examinations.remotePoints
+      { collections := (List.range n).map fun k => ⟨k, 0, .listed, .notPaired, none⟩
+        usingInformationCommunicationEquipment := true
+        patientWithNurseEtc := true }))
   let generalUrine := pointRow "D000" "generalUrine" "base" 0 0 (some D000.points)
   let specialUrine ← (← constructors ``UrineFecalTests.UrineSpecial).mapM fun ctor => do
     if ctor == ``UrineFecalTests.UrineSpecial.other then
@@ -271,6 +280,8 @@ private unsafe def points : MetaM (List Json) := do
     return match rule with
       | .fixed price => pointRow "D001" ctor.getString! "base" number 0 (some price)
       | .reference .. => pointRow "D001" ctor.getString! "reference" number 0 none
+  let stripRatio := pointRow "D001" "stripProteinCreatinineRatio" "reference" 22 0
+    (some (BloodChemistry.Item.points .creatinine))
   let sediment :=
     [pointRow "D002" "microscopy" "base" 0 0 (some (UrineSediment.Method.points .microscopy)),
      pointRow "D002" "stainedSpecimen" "note" 3 0 (some UrineSediment.stainPoints),
@@ -330,7 +341,7 @@ private unsafe def points : MetaM (List Json) := do
       ("D419", 4, .anteriorChamberFluid), ("D419", 5, .adrenalVenousSampling)]
   let collectionNotes := collectionInfants.map fun (code, noteNumber, item) =>
     pointRow code "infant" "note" noteNumber 0 (some (SpecimenCollection.infantPoints item 0))
-  return [generalUrine] ++ specialUrine ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
+  return [generalUrine] ++ remote ++ specialUrine ++ [stripRatio] ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
