@@ -8,6 +8,7 @@ import Sanri.MedicalManagement
 import Sanri.SpecificDiseaseManagement
 import Sanri.Examinations
 import Sanri.UrineFecalTests
+import Sanri.D000
 import Sanri.SpecimenRules
 import Sanri.SpecimenTestsChecks
 import Sanri.SpecimenJudgment

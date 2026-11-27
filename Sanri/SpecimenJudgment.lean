@@ -37,6 +37,7 @@ structure Test where
   variant : Nat := 0
   ordinaryCategory : Category
   performed : Bool := true
+  /-- 旧入力との互換用。D000の判断料除外は実施料の算定有無に依存しない。 -/
   d000PointsCharged : Bool := false
   /-- 当該検査の専門知識を有する医師が、その結果を文書報告した。 -/
   specialistWrittenReport : Bool := false
@@ -58,7 +59,7 @@ def geneRouting (t : Test) : Bool :=
 
 def categoryFor (t : Test) : Option Category :=
   if !t.performed then none
-  else if t.major = 0 ∧ t.suffix = 0 ∧ t.d000PointsCharged = true then none
+  else if t.major = 0 ∧ t.suffix = 0 then none
   else if geneRouting t then some .geneticChromosomal
   else some t.ordinaryCategory
 
@@ -155,6 +156,7 @@ example : scheduledPoints methylation.ordinaryCategory = 34 ∧
 example : allCategories.map scheduledPoints = [34, 100, 125, 144, 144, 144, 150] := rfl
 example : points { tests := [urine, urine, urine] } = some 34 := by decide
 example : points { tests := [urine], categoriesClaimedThisMonth := [.urineFecal] } = some 0 := by decide
+example : points { tests := [{ urine with major := 0 }] } = some 0 := by decide
 example : points { tests := [{ urine with major := 0, d000PointsCharged := true }] } = some 0 := by decide
 example : points { tests := [urine, { urine with major := 0, d000PointsCharged := true }] } = some 34 := by decide
 example : (List.map (fun n => categoryFor (gene n)) [1, 2, 9, 10, 11, 20, 21, 22, 31, 32]) =

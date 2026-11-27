@@ -200,7 +200,8 @@ private unsafe def points : MetaM (List Json) := do
     pointRow "D008" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
   let endocrineBundle := [410, 623, 900].map fun p =>
     pointRow "D008" ("bundle" ++ toString p) "note" 0 0 (some p)
-  return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
+  let generalUrine := pointRow "D000" "generalUrine" "base" 0 0 (some D000.points)
+  return [generalUrine] ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
