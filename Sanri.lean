@@ -89,9 +89,11 @@ import Sanri.Logic
 import Sanri.History
 import Sanri.HistoryConnections
 import Sanri.CaseStudies.ResidualUrine
+import Sanri.CaseStudies.TableProjection
 import Sanri.CaseStudies.GlycemicTables
 import Sanri.CaseStudies.PunctureAgeTables
 import Sanri.CaseStudies.RenalTestFrequency
 import Sanri.CaseStudies.SpecimenPairwiseTables
+import Sanri.CaseStudies.Pf4Tables
 import Sanri.CaseStudies.FilingClarification
 import Sanri.CaseStudies.OutpatientBloodTests

@@ -18,7 +18,10 @@ from .fee_ledger import INVENTORY, compare_points, load_lean, read_index
 from .local_pdf import verified_pdf_pages
 from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, R08_DOWNLOADS
 from .r08_inventory import compact, notice_spans
-from .specimen_audit_groups import METHOD_BUNDLES, group_inventory, group_pair_presence
+from .specimen_exception_review import review_remaining
+from .specimen_audit_groups import (
+    METHOD_BUNDLES, group_inventory, group_pair_presence, reviewed_partial_scopes,
+)
 from .procedure_master import (
     ARCHIVE_SHA256, INDEX_COLUMNS, LOCAL, _write, index_rows,
     load_registered, require,
@@ -1610,6 +1613,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lean-ledger", type=lambda value: LOCAL / "inventory" / value,
                         help="inventory 内に保存した FeeLedger.lean の出力ファイル名")
+    parser.add_argument("--check-projection", action="store_true",
+                        help="登録版からの射影と Lean の事例定数を照合する")
     options = parser.parse_args()
     backlog = read_index("specimen-backlog.json")
     require(backlog["revision_as_of"] == DAY.isoformat(), "通知索引の基準日が異なる")
@@ -1741,7 +1746,10 @@ def main():
     tables, inclusion_lines = table_rows(snapshot, set(mapping))
     locations = {r.code: (r.chapter, r.part, r.division) for r in records}
     reverse = compare_tables(tables, mapping, locations)
+    variants_path = INVENTORY / "specimen-exception-variants.json"
+    review_remaining(tables, mapping, read_index(variants_path.name) if variants_path.exists() else {})
     pair_presence, unmatched_simultaneous = selection_pair_audit(tables, mapping)
+    partial_reviews = reviewed_partial_scopes(pair_presence)
     compare_count_attributes(mapping, tables["frequency"], records_by_code)
     parent_counts = defaultdict(Counter)
     parent_division_counts = defaultdict(Counter)
@@ -1839,6 +1847,7 @@ def main():
         "previous_point_set_differences": point_differences,
         "group_inventory": groups,
         "selection_pair_presence": pair_presence,
+        "reviewed_partial_scopes": partial_reviews,
         "simultaneous_outside_registered_pairs": unmatched_simultaneous,
         "day_locations": [{"pair": pair, "count": count} for pair, count in day_counts.most_common()],
         "exclusions_by_division_pair": {
@@ -1857,6 +1866,15 @@ def main():
                                    "limits": "行をまたぐ名称・略称・未索引箇所は要確認"},
         "three_combination_reviews": combination_reviews(reverse, tables, mapping),
     }
+    if options.check_projection:
+        from .specimen_projection import check
+        projection = check(tables, mapping, pair_presence, records_by_code, DAY,
+                           INVENTORY / "specimen-projection-absence.json")
+        _write(INVENTORY / "specimen-projection-check.json",
+               json.dumps(projection, ensure_ascii=False, indent=2) + "\n")
+        print(json.dumps(projection, ensure_ascii=False))
+        require(all(status == MATCH for status in projection["cases"].values()),
+                "検体検査の事例射影が Lean の観測値と異なる")
     report["electronic_to_lean"]["inclusion"] = pack_inclusion(tables["inclusion"])
     path = INVENTORY / "specimen-external-audit.json"
     _write(path, json.dumps(report, ensure_ascii=False, separators=(",", ":")) + "\n")

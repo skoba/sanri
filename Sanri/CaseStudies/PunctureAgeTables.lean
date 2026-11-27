@@ -1,8 +1,15 @@
 import Sanri.SimplePunctures
+import Sanri.CaseStudies.TableProjection
 
 namespace Sanri.MedicalFee.CaseStudies.PunctureAgeTables
 
-open Sanri.Logic SimplePunctures
+open Sanri.Logic SimplePunctures TableProjection
+
+inductive Addition where
+  | d401Infant
+  deriving Repr
+
+def ageObservation : AgeAddition Addition := ⟨.d401Infant, 0, 6, 100⟩
 
 /-- 基本項目の年齢加算欄からD401と共通の加算を参照する。
 ここでは年齢区間と参照先の固定加算点数を射影する。 -/
@@ -10,8 +17,7 @@ def ageSlot (referencedPoints : Nat) : Rule Context Result :=
   ⟨"puncture/age-slot",
    ⟨.electronicTable, "医科診療行為マスター", "2026-11-02公開版",
     "D402の年齢加算欄からD401の注加算を参照", .checkedAgainstSource, none⟩,
-   fun c r => r.infant =
-     if c.ageYears < 6 then referencedPoints else 0⟩
+   fun c r => r.infant = ({ ageObservation with points := referencedPoints }).atAge c.ageYears⟩
 
 def Scope (c : Context) : Prop :=
   c.separate ∧ c.performance.item = .suboccipital
@@ -25,7 +31,11 @@ theorem age_equivalent (referencedPoints : Nat) (d401Points : referencedPoints =
   simp only [satisfies_cons, satisfies_nil, and_true]
   change (c.separate → c.performance.item = .suboccipital →
      r.infant = 1 * (if c.ageYears < 6 then 100 else 0)) ↔ (ageSlot referencedPoints).holds c r
-  simp [ageSlot, hc.1, hc.2, d401Points]
+  simp [ageSlot, ageObservation, AgeAddition.atAge, hc.1, hc.2, d401Points]
+
+theorem observed_age_equivalent :
+    EquivalentOn Scope [suboccipitalInfant] [ageSlot ageObservation.points] :=
+  age_equivalent _ rfl
 
 private def exampleContext (age : Nat) : Context :=
   ⟨{ id := 1, site := ⟨1, 1, ⟨⟨2026, 10, by decide⟩, 22, by decide⟩⟩,

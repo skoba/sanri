@@ -170,6 +170,19 @@ git check-ignore tensuhyo/inventory/specimen-external-audit.json
 
 工程3a-5fのレポートは、3a-5eの固定分母のローカルレビューJSONを保持した状態で、上記の照合を再生成してから `python3 tensuhyo/inventory/3a-5f-review.py` で更新できます。この作業環境にあるスクリプトは、逆方向・一部収載・算定回数の再確認を `inventory/3a-5f-*-review.json` に記録します。告示項に複数の検査種類が入る場合はコード別の追加索引も記録します。公開文書の最終集計にはこの追加照合を含みます。
 
+工程3a-5gの事例定数との照合を実行するには、前の手順で用意した索引とレビューに加え、`inventory/specimen-projection-absence.json` を用意します。このファイルは原本を確認した固定のコード対を、`d014_missing`、`pancreatic_missing`、`pneumococcus_missing`、`pertussis_missing`、`electrophoresis`、`respiratory_missing` のキーごとに二要素配列の一覧として保持します。再作成時は3a-5fの群別原本レビューで確認した前工程の18対を使い、D012(43)イは通知が列挙する検査種類に絞ります。監査はこの入力を基準日の対応済み候補集合で検査します。
+
+```sh
+lake build
+lake env lean tools/FeeLedger.lean > tensuhyo/inventory/specimen-lean-ledger.json
+python3 -m tools.audit_specimen --lean-ledger specimen-lean-ledger.json --check-projection
+git check-ignore tensuhyo/inventory/specimen-projection-absence.json tensuhyo/inventory/specimen-projection-check.json
+```
+
+`inventory/specimen-projection-check.json` に事例ごとの一致・不一致と、固定した欠落対に関係行が見つかった件数を保存します。射影が異なる場合はコマンドが失敗します。個別のコード対応・関係行は `specimen-external-audit.json` で確認できます。公開定数の出力単体は `lake env lean tools/SpecimenProjection.lean` で確認できます。
+
+特例のレビューでは、通常監査にも原本と既存Lean制約の対応、残る理由型が出ます。同じ告示項に別種が含まれる3行はローカルの `inventory/specimen-exception-variants.json` で、確認したコードから `tumor_reselection`、`sars_repeat`、`hbv_purpose` への対応を保持します。個別対応がないときは当該行を未判定に保持します。D004-2(7)・D011(4)ウの追加判定は `reviewed_partial_scopes` 欄にあります。工程3a-5fまでのローカル追加照合も含む件数は検証状況に記録します。[検証状況](../docs/validation-status.md#検体検査の外部照合工程3a-5)
+
 ## 残尿測定の限定的なCSV照合
 
 リポジトリのルートから実行します。対象コード・診療日・本文の共有上限と出典は、呼出元が確認して明示する入力です。スクリプト自身が本文やコード対応を公的資料から証明するわけではありません。

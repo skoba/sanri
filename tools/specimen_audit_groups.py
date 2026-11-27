@@ -225,3 +225,38 @@ def group_inventory(reverse, mapping, bundle_reviews):
                            representation=["包括額（マスター）"])
         result.append(row)
     return result
+
+
+def reviewed_partial_scopes(presence):
+    """限定した二群について、通知上の対象と五表の収載を対応付ける。"""
+    tumor = "notice/D004-2/paragraph/7"
+    pf4 = "notice/D011/paragraph/4/u"
+    if tumor not in presence or pf4 not in presence:
+        return {}
+    tumor_scope = {("D004-2", "drugAid"), ("D004-2", "complex")}
+    peers = {("D006-2", "hematopoieticTumorGene"), ("D006-6", "immuneRearrangement"),
+             ("D006-14", "flt3"), ("D006-16", "jak2")}
+    pairs = set()
+    for row in presence[tumor]["pairs"]:
+        items = set(map(tuple, row["items"]))
+        if items & tumor_scope and items & peers:
+            pairs.update(map(tuple, row["missing_code_pairs"]))
+    tumor_complete = len(pairs) == presence[tumor]["code_pairs"]["missing"] == 12
+    pf4_complete = presence[pf4]["code_pairs"] == {"status": "一部のみ", "expected": 3, "missing": 2}
+    return {
+        tumor: {"classification": "資料間の不一致の疑い" if tumor_complete else "情報不足で判定できない",
+                "reason_type": "通知の同月併施対象内・五表で関連行なし" if tumor_complete else
+                               "原本レビューの分母と現在の収載が異なる",
+                "pdf_pages": [335, 336, 337], "primary_pdf_pages": [175],
+                "synopsis": "各実施の適格性と同一患者の同一暦月を確認した範囲。通知(7)は第1項全体を参照。",
+                "missing_code_pairs": sorted(pairs) if tumor_complete else [],
+                "lean_definition": "D004Tumor.hematologicRule"},
+        pf4: {"classification": "表現の差" if pf4_complete else "情報不足で判定できない",
+              "reason_type": "三方式の一連と二件の同時背反の非包含" if pf4_complete else
+                             "原本レビューの分母と現在の収載が異なる",
+              "pdf_pages": [369, 370], "primary_pdf_pages": [184],
+              "synopsis": "欠落二対を含む三方式が一連の発動範囲。二方式だけで発動する独立した背反は導かれない。",
+              "missing_code_pairs": [pair for r in presence[pf4]["pairs"] for pair in r["missing_code_pairs"]]
+                                    if pf4_complete else [],
+              "lean_definition": "Pf4Tables.notice_selection_iff"},
+    }

@@ -1,8 +1,9 @@
 import Sanri.SpecimenCrossDivision
+import Sanri.CaseStudies.TableProjection
 
 namespace Sanri.MedicalFee.CaseStudies.SpecimenPairwiseTables
 
-open Sanri.History Sanri.Logic SpecimenCrossDivision
+open Sanri.History Sanri.Logic SpecimenCrossDivision TableProjection
 
 /-- 各項目一実施について個別の適格性を外部で確認した三実施の比較入力。
 実施ID・患者・機関は固定し、最後の実施の同時IDと検体IDを動かせる。 -/
@@ -69,19 +70,41 @@ def tableSource : SourceRef :=
   ⟨.electronicTable, "電子点数表", "2026-10-13公開版",
     "同時背反テーブル・優先方向3・特例なし", .transcribed, none⟩
 
-/-- 同時が確認された二実施について、優先方向3の特例なし行の採否を表す。 -/
-private def symmetricPair (simultaneous : Option Bool) (a b : Bool) : Prop :=
-  simultaneous = some true → (a && b) = false
+def coagulationObservation : List (Pair D006.Item) :=
+  allPairs "simultaneous" false [.tat, .prothrombinFragment, .fibrinMonomer]
+
+def electrophoresisObservation : List (Pair D015.Item) :=
+  [symmetric "simultaneous" false .wholeAntiserum .specificAntiserum]
+
+private def coagulationPicked (s : Selection) : D006.Item → Prop
+  | .tat => s.first = true
+  | .prothrombinFragment => s.second = true
+  | .fibrinMonomer => s.third = true
+  | _ => False
+
+private def electrophoresisPicked (s : Selection) : D015.Item → Prop
+  | .wholeAntiserum => s.first = true
+  | .specificAntiserum => s.second = true
+  | .drugImmunofixation => s.third = true
+  | _ => False
 
 def coagulationTable : Rule Comparison Selection :=
   ⟨"table/specimen/coagulation/full-pairs", tableSource, fun c s =>
-    symmetricPair (some true) s.first s.second ∧
-    symmetricPair (c.lastSimultaneous.map (· == 1)) s.first s.third ∧
-    symmetricPair (c.lastSimultaneous.map (· == 1)) s.second s.third⟩
+    pairLimits (fun row => symmetricIn "simultaneous" False row ∧
+      (row.right = .fibrinMonomer → c.lastSimultaneous = some 1))
+      (coagulationPicked s) coagulationObservation⟩
 
 def electrophoresisTable : Rule Comparison Selection :=
   ⟨"table/specimen/electrophoresis/partial-pairs", tableSource, fun _ s =>
-    symmetricPair (some true) s.first s.second⟩
+    pairLimits (symmetricIn "simultaneous" False)
+      (electrophoresisPicked s) electrophoresisObservation⟩
+
+private theorem electrophoresis_table_iff (c : Comparison) (s : Selection) :
+    electrophoresisTable.holds c s ↔ (s.first && s.second) = false := by
+  rcases s with ⟨first, second, third⟩
+  cases first <;> cases second <;>
+    simp [electrophoresisTable, pairLimits, symmetricIn, symmetric,
+      electrophoresisPicked, electrophoresisObservation, *]
 
 private theorem singleton_iff (rule : Rule Comparison Result) (c : Comparison)
     (s : Result) : Satisfies [rule] c s ↔ rule.holds c s := by
@@ -130,8 +153,10 @@ theorem coagulation_equivalent :
   have compare (c : Comparison) (h : SimultaneousScope c) (s : Selection) :
       Satisfies [coagulationNotice] c s ↔ Satisfies [coagulationTable] c s := by
     rw [singleton_iff, singleton_iff, coagulation_projection c h]
-    simpa [coagulationTable, symmetricPair, h.2] using
-      coagulation_full_pairs s.first s.second s.third
+    rcases s with ⟨a, b, d⟩
+    cases a <;> cases b <;> cases d <;>
+      simp [AtMostOne, coagulationTable, pairLimits, symmetricIn, symmetric,
+        coagulationPicked, coagulationObservation, allPairs, h.2]
   exact ⟨fun c h s => (compare c h s).mp, fun c h s => (compare c h s).mpr⟩
 
 /-- 同一検体かつ同時の範囲では、D015(4)イが一対の同時背反を含意する。 -/
@@ -139,8 +164,8 @@ theorem electrophoresis_refines :
     RefinesOn SpecimenScope [electrophoresisNotice] [electrophoresisTable] := by
   intro c h s accepted
   rw [singleton_iff]
-  exact fun _ => electrophoresis_partial_pairs _ _ _
-    ((electrophoresis_projection c h s).mp ((singleton_iff _ _ _).mp accepted))
+  exact (electrophoresis_table_iff _ _).mpr (electrophoresis_partial_pairs _ _ _
+    ((electrophoresis_projection c h s).mp ((singleton_iff _ _ _).mp accepted)))
 
 private def confirmed : Comparison := ⟨true, some 1, some 1⟩
 
@@ -148,7 +173,7 @@ theorem electrophoresis_disagrees :
     SpecimenScope confirmed ∧ DisagreesAt [electrophoresisNotice] [electrophoresisTable] confirmed := by
   have scope : SpecimenScope confirmed := ⟨⟨rfl, rfl⟩, rfl⟩
   refine ⟨scope, ⟨⟨true, false, true⟩, Or.inr ⟨?_, ?_⟩⟩⟩
-  · exact (singleton_iff _ _ _).mpr (fun _ => rfl)
+  · exact (singleton_iff _ _ _).mpr ((electrophoresis_table_iff _ _).mpr rfl)
   · rw [singleton_iff, electrophoresis_projection _ scope]
     unfold AtMostOne; decide
 
@@ -156,7 +181,7 @@ theorem electrophoresis_all_extra_selections (c : Comparison) (scope : SpecimenS
     (picked : Selection) (table : Satisfies [electrophoresisTable] c picked) :
     ¬ Satisfies [electrophoresisNotice] c picked ↔
       picked.third = true ∧ (picked.first = true ∨ picked.second = true) := by
-  have pair := (singleton_iff _ _ _).mp table rfl
+  have pair := (electrophoresis_table_iff _ _).mp ((singleton_iff _ _ _).mp table)
   rw [singleton_iff, electrophoresis_projection _ scope]
   rcases picked with ⟨first, second, third⟩
   cases first <;> cases second <;> cases third <;> simp_all [AtMostOne]
@@ -193,17 +218,20 @@ def d014Notice : Rule Comparison (List D014.Item) :=
       p.item ∈ items →
       D014.ccpChoice.holds { performance := p, combined := some (performed, items) } ()⟩
 
+def d014MissingObservation : List (Pair D014.Item) := []
+
 /-- 対象二件に適用できる背反行を観測しなかったときの表の射影。
 表から行を抽出する処理と、他の算定規則の適用は定理の範囲外。 -/
 def d014ObservedTable : Rule Comparison (List D014.Item) :=
   ⟨"table/specimen/d014/no-observed-pair",
     { tableSource with location := "同時・同日・同月・週背反の対象二件を検索" },
-    fun _ items => ∀ i ∈ items, i = .ccpQual ∨ i = .c1q⟩
+    fun _ items => (∀ i ∈ items, i = .ccpQual ∨ i = .c1q) ∧
+      pairLimits (fun _ => True) (· ∈ items) d014MissingObservation⟩
 
 theorem d014_missing_pair_disagrees :
     D014Scope confirmed ∧ DisagreesAt [d014Notice] [d014ObservedTable] confirmed := by
   refine ⟨⟨rfl, rfl⟩, ⟨[.ccpQual, .c1q], Or.inr ⟨?_, ?_⟩⟩⟩
-  · simp [Satisfies, d014ObservedTable]
+  · simp [Satisfies, d014ObservedTable, pairLimits, d014MissingObservation]
   · intro h
     have hs := (singleton_iff d014Notice confirmed [.ccpQual, .c1q]).mp h
     have chosen := hs.2 ⟨1, site, .ccpQual, none, some 1, none, some 1⟩
@@ -225,10 +253,33 @@ private def ccpGroup : List D014.Item := [.ccpQual, .ccpQuant] ++ rheumatoidComm
 def D014FullScope (c : Comparison) (picked : List D014.Item) : Prop :=
   D014Scope c ∧ picked.Nodup ∧ ∀ i ∈ picked, i ∈ ccpGroup
 
+private def d014Listed : List D014.Item :=
+  [.ccpQual, .ccpQuant, .galactoseQual, .galactoseQuant, .mmp3, .rfComplex, .iggRf]
+
 /-- 観測した21対は、八種類から一種類を除いた七種類の全対。 -/
+def d014Observation : List (Pair D014.Item) := allPairs "simultaneous" false d014Listed
+
 def d014FullTable : Rule Comparison (List D014.Item) :=
   ⟨"table/specimen/d014/21-observed-pairs", tableSource, fun _ picked =>
-    ∀ a ∈ picked, ∀ b ∈ picked, a ≠ .c1q → b ≠ .c1q → a = b⟩
+    pairLimits (symmetricIn "simultaneous" False) (· ∈ picked) d014Observation⟩
+
+private theorem d014_table_iff (c : Comparison) (picked : List D014.Item)
+    (scope : D014FullScope c picked) :
+    d014FullTable.holds c picked ↔
+      ∀ a ∈ picked, ∀ b ∈ picked, a ≠ .c1q → b ≠ .c1q → a = b := by
+  have member (i : D014.Item) : i ∈ d014Listed ↔ i ∈ ccpGroup ∧ i ≠ .c1q := by
+    cases i <;> decide
+  have applies (a b : D014.Item) :
+      symmetricIn "simultaneous" False (symmetric "simultaneous" false a b) := by
+    simp [symmetricIn, symmetric]
+  change pairLimits _ _ (allPairs _ _ _) ↔ _
+  rw [allPairs_iff _ _ _ _ _ (by decide) applies]
+  constructor
+  · intro h a ha b hb ac bc
+    exact h a ((member a).mpr ⟨scope.2.2 a ha, ac⟩)
+      b ((member b).mpr ⟨scope.2.2 b hb, bc⟩) ha hb
+  · intro h a ha b hb pa pb
+    exact h a pa b pb ((member a).mp ha).2 ((member b).mp hb).2
 
 def d014MissingPairs (picked : List D014.Item) : Prop :=
   .c1q ∈ picked → ∀ b ∈ picked, b = .c1q
@@ -276,7 +327,7 @@ theorem d014_full_notice_equivalent (c : Comparison) (picked : List D014.Item)
     (scope : D014FullScope c picked) :
     d014FullNotice.holds c picked ↔
       d014FullTable.holds c picked ∧ d014MissingPairs picked := by
-  rw [d014_full_notice_iff c picked scope, at_most_one_item scope.2.1]
+  rw [d014_full_notice_iff c picked scope, at_most_one_item scope.2.1, d014_table_iff c picked scope]
   constructor
   · intro h
     exact ⟨fun a ha b hb _ _ => h a ha b hb, fun hc b hb => h b hb .c1q hc⟩
@@ -302,7 +353,7 @@ example : D014FullScope confirmed [.ccpQual, .c1q] ∧
   have scope : D014FullScope confirmed [.ccpQual, .c1q] :=
     ⟨⟨rfl, rfl⟩, by decide, by simp [ccpGroup, rheumatoidCommon]⟩
   have table : d014FullTable.holds confirmed [.ccpQual, .c1q] := by
-    simp [d014FullTable]
+    exact (d014_table_iff _ _ scope).mpr (by simp)
   exact ⟨scope, table, (d014_full_table_disagreement _ _ scope table).mpr
     ⟨by simp, .ccpQual, by simp, by decide⟩⟩
 
@@ -406,16 +457,29 @@ private def noticeFromGroup (id : String) (source : SourceRef) (observed : Optio
   ⟨id, source, fun _ picked =>
     ∃ group, observed = some group ∧ (GroupChoice.mk group picked).Valid⟩
 
+inductive RepresentativeItem where
+  | trypsinogen2 | amylase | pneumococcusWall | pneumococcusCapsule
+  | pertussisAntigen | pertussisGroup | respiratoryPanelCovid
+  deriving Repr
+
+def pancreaticMissingObservation : List (Pair RepresentativeItem) := []
+def pneumococcusMissingObservation : List (Pair RepresentativeItem) := []
+def pertussisMissingObservation : List (Pair RepresentativeItem) := []
+def respiratoryMissingObservation : List (Pair RepresentativeItem) := []
+
 /-- 採否を固定した二候補について、関連行を同定できなかった射影。 -/
-private def noObservedPair (id : String) : Rule Comparison (List Nat) :=
-  ⟨id, tableSource, fun _ picked => ∀ i ∈ picked, i = 1 ∨ i = 2⟩
+private def noObservedPair (id : String) (a b : RepresentativeItem)
+    (rows : List (Pair RepresentativeItem)) : Rule Comparison (List Nat) :=
+  ⟨id, tableSource, fun _ picked => (∀ i ∈ picked, i = 1 ∨ i = 2) ∧
+    pairLimits (fun _ => True)
+      (fun item => (item = a ∧ 1 ∈ picked) ∨ (item = b ∧ 2 ∈ picked)) rows⟩
 
 private theorem single_group_missing_pair (id tableId : String) (source : SourceRef)
-    (observed : Option ChoiceGroup) (identifies : observed = some ⟨source, [1, 2], 1⟩) :
+    (a b : RepresentativeItem) (observed : Option ChoiceGroup) (identifies : observed = some ⟨source, [1, 2], 1⟩) :
     SimultaneousScope confirmed ∧
-      DisagreesAt [noticeFromGroup id source observed] [noObservedPair tableId] confirmed := by
+      DisagreesAt [noticeFromGroup id source observed] [noObservedPair tableId a b []] confirmed := by
   refine ⟨⟨rfl, rfl⟩, ⟨[1, 2], Or.inr ⟨?_, ?_⟩⟩⟩
-  · simp [Satisfies, noObservedPair]
+  · simp [Satisfies, noObservedPair, pairLimits]
   · intro h
     obtain ⟨group, eq, valid⟩ := (singleton_iff _ _ _).mp h
     rw [identifies] at eq
@@ -430,8 +494,9 @@ theorem pancreatic_missing_pair_disagrees :
       DisagreesAt
         [noticeFromGroup D001.pancreaticRule.id D001.pancreaticRule.source
           (pancreaticGroup pancreaticUrine [pancreaticChemistry] [])]
-        [noObservedPair "table/specimen/pancreatic/no-observed-pair"] confirmed :=
-  single_group_missing_pair _ _ _ _ rfl
+        [noObservedPair "table/specimen/pancreatic/no-observed-pair"
+          .trypsinogen2 .amylase pancreaticMissingObservation] confirmed :=
+  single_group_missing_pair _ _ _ _ _ _ rfl
 
 private def infectionPair (a b : D012.RelatedTest) : D012.Combined :=
   { members := [⟨1, site, a, none, none, none, some 1⟩, ⟨2, site, b, none, none, none, some 1⟩] }
@@ -443,8 +508,9 @@ theorem pneumococcus_missing_pair_disagrees :
         [noticeFromGroup D012.pneumococcusWallChoice.id D012.pneumococcusWallChoice.source
           (infectionGroup .pneumococcus
             (infectionPair (.local .pneumococcusWall) (.local .pneumococcusCapsule)))]
-        [noObservedPair "table/specimen/pneumococcus/specimen-specific-gap"] confirmed :=
-  single_group_missing_pair _ _ _ _ rfl
+        [noObservedPair "table/specimen/pneumococcus/specimen-specific-gap"
+          .pneumococcusWall .pneumococcusCapsule pneumococcusMissingObservation] confirmed :=
+  single_group_missing_pair _ _ _ _ _ _ rfl
 
 /-- D012(43)イの相手として通知で確認した一種類との併施に限る。 -/
 theorem pertussis_missing_pair_disagrees :
@@ -452,8 +518,9 @@ theorem pertussis_missing_pair_disagrees :
       DisagreesAt
         [noticeFromGroup D012.pertussisChoice.id D012.pertussisChoice.source
           (infectionGroup .pertussis (infectionPair (.local .pertussisAntigen) .pertussisD023_13))]
-        [noObservedPair "table/specimen/pertussis/dual-assay-gap"] confirmed :=
-  single_group_missing_pair _ _ _ _ rfl
+        [noObservedPair "table/specimen/pertussis/dual-assay-gap"
+          .pertussisAntigen .pertussisGroup pertussisMissingObservation] confirmed :=
+  single_group_missing_pair _ _ _ _ _ _ rfl
 
 private def respiratoryAnchor : Performance Unit :=
   ⟨1, site, (), none, none, some 1, some 1⟩
@@ -467,7 +534,10 @@ def respiratoryNotice : Rule Comparison Bool :=
       (fun test => some (test == respiratoryPeer.item))⟩
 
 def respiratoryObservedTable : Rule Comparison Bool :=
-  ⟨"table/specimen/respiratory/no-observed-pair", tableSource, fun _ _ => True⟩
+  ⟨"table/specimen/respiratory/no-observed-pair", tableSource, fun _ separate =>
+    pairLimits (fun _ => True)
+      (fun item => item = .respiratoryPanelCovid ∨ (item = .pertussisAntigen ∧ separate = true))
+      respiratoryMissingObservation⟩
 
 /-- D023(37)ウ(タ)の代表一対。パネルを採用し、相手を別実施した状況に限る。
 同じ一連であり、同時性も独立に確認する。結果は相手の別算定の採否。 -/
@@ -477,7 +547,7 @@ theorem respiratory_series_missing_pair_disagrees :
       respiratoryAnchor.simultaneousWith { respiratoryPeer with item := () } = some true ∧
       DisagreesAt [respiratoryNotice] [respiratoryObservedTable] confirmed := by
   refine ⟨⟨rfl, rfl⟩, rfl, rfl, ⟨true, Or.inr ⟨?_, ?_⟩⟩⟩
-  · simp [Satisfies, respiratoryObservedTable]
+  · simp [Satisfies, respiratoryObservedTable, pairLimits, respiratoryMissingObservation]
   · intro h
     have excluded := (singleton_iff _ _ _).mp h
     change D023.SeriesExcludes respiratoryAnchor [respiratoryPeer]
@@ -489,6 +559,6 @@ theorem respiratory_series_missing_pair_disagrees :
       contradiction
 
 example : Satisfies [respiratoryNotice, respiratoryObservedTable] confirmed false := by
-  simp [Satisfies, respiratoryNotice, respiratoryObservedTable, D023.SeriesExcludes]
+  simp [Satisfies, respiratoryNotice, respiratoryObservedTable, D023.SeriesExcludes, pairLimits, respiratoryMissingObservation]
 
 end Sanri.MedicalFee.CaseStudies.SpecimenPairwiseTables
