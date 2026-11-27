@@ -141,6 +141,46 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
                         if notice_pages is not None:
                             found.update(nested_notice_paths(child, child_id, notice_pages))
 
+    # 一般通知の見出しは区分付き通知とは別の索引集合に入る。
+    for block in notice.get("general", []):
+        if (block["chapter"], block["part"]) != (2, 3):
+            continue
+        section, subsection = block["section"], block["subsection"]
+        paragraphs = block["paragraphs"]
+        if section is None and block["kind"] == "general_heading":
+            prefix = "notice/ch2-part3/general"
+        elif section == 4 and block["kind"] == "division":
+            prefix = "notice/ch2-part3-section4/general"
+        elif (section, subsection) == (1, 1) and block["kind"] == "general_heading":
+            # 登録版の見出し位置。節・款と発出版の双方を固定する。
+            category = {(329, 34): "emergency", (330, 15): "rapid"}.get(
+                (block["start"]["page"], block["start"]["line"]))
+            if category is None:
+                continue
+            prefix = f"notice/ch2-part3-section1-subsection1/{category}"
+        else:
+            continue
+        for paragraph in paragraphs:
+            number = paragraph["number"]
+            if number is not None:
+                found[f"{prefix}/{number}"] += 1
+                parent = None
+                for child in paragraph["children"]:
+                    if isinstance(child["number"], int):
+                        parent = f"{prefix}/{number}/{child['number']}"
+                        found[parent] += 1
+                    elif parent and "id_suffix" in child:
+                        child_path = f"{parent}/{child['id_suffix']}"
+                        found[child_path] += 1
+                        if notice_pages is not None:
+                            start, end = child["start"], child["end"]
+                            for page in range(start["page"], end["page"] + 1):
+                                for line, raw in enumerate(notice_pages[page - 1].splitlines(), 1):
+                                    if (start["page"], start["line"]) < (page, line) <= (end["page"], end["line"]):
+                                        marker = re.match(r"([a-z])\s+", normalized(raw.lstrip()))
+                                        if marker:
+                                            found[f"{child_path}/{marker[1]}"] += 1
+
     check = {"checked": len(expected), "matched": sorted(key for key in expected if found[key] == 1),
              "missing": sorted(key for key in expected if not found[key]),
              "ambiguous": sorted(key for key in expected if found[key] > 1)}

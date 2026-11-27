@@ -133,9 +133,10 @@ def clause_paths(rule: dict) -> list[tuple[str, ...]]:
         number = r"[1-9][0-9]*"
         kana = r"[a-z]+"
         patterns = {
-            "primary": (rf"{division}/(?:heading|item/{number}(?:/note(?:/{number}(?:/{kana})?)?)?|note/(?:{number}(?:/{kana})?|{kana}|unnumbered/{number}))",
-                        rf"ch{number}-part{number}(?:-section{number})?(?:-subsection{number})?/general/{number}"),
-            "notice": (rf"{division}/paragraph/(?:{number}(?:/{kana}(?:/{number}|/{kana}(?:/{number})?)?)?|unnumbered)",),
+            "primary": (rf"{division}/(?:heading|item/{number}(?:/{kana}|/note(?:/{number}(?:/{kana})?)?)?|note/(?:{number}(?:/{kana})?|{kana}|unnumbered/{number}))",
+                        rf"ch{number}-part{number}(?:-section{number})?(?:-subsection{number})?/general/(?:{number}(?:/{kana})?|unnumbered)"),
+            "notice": (rf"{division}/paragraph/(?:{number}(?:/{kana}(?:/{number}|/{kana}(?:/{number})?)?)?|unnumbered)",
+                       rf"ch{number}-part{number}(?:-section{number})?(?:-subsection{number})?/(?:general|emergency|rapid)/{number}(?:/{number}(?:/{kana}(?:/{kana})?)?)?"),
             "clarification": (rf"[a-z0-9-]+/question/{number}",),
         }
         tail = "/".join(parts[1:])

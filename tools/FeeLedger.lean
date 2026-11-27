@@ -287,6 +287,49 @@ private unsafe def points : MetaM (List Json) := do
     pointRow "D026" "managementI" "note" 8 0 (some SpecimenJudgment.managementIPoints),
     pointRow "D026" "marrow" "note" 10 0 (some SpecimenJudgment.marrowPoints),
     pointRow "D026" "electrophoresis" "note" 11 0 (some SpecimenJudgment.electrophoresisPoints)]
+  let collectionItems : List (String × Nat × SpecimenCollection.Item) :=
+    [("D400", 1, .venousBlood), ("D400", 2, .otherBlood),
+      ("D401", 0, .ventricularPuncture), ("D402", 0, .suboccipitalPuncture),
+      ("D403", 0, .lumbarPuncture), ("D404", 1, .sternalMarrowPuncture),
+      ("D404", 2, .otherMarrowPuncture), ("D404-2", 0, .marrowBiopsy),
+      ("D405", 0, .jointPuncture), ("D406", 0, .maxillarySinusPuncture),
+      ("D406-2", 0, .peritonsillarTrialPuncture), ("D407", 0, .renalCystHydronephrosisPuncture),
+      ("D408", 0, .douglasPuncture), ("D409", 0, .lymphNodeNeedleBiopsy),
+      ("D410", 1, .breastBiopsyNeedle), ("D410", 2, .breastOther),
+      ("D411", 0, .thyroidNeedleBiopsy), ("D409-2", 1, .sentinelCombined), ("D409-2", 2, .sentinelSingle),
+      ("D412", 0, .percutaneousNeedleBiopsy),
+      ("D412-2", 0, .percutaneousRenalBiopsy), ("D412-3", 0, .transjugularLiverBiopsy),
+      ("D413", 1, .prostateMriUltrasoundFusion), ("D413", 2, .prostateOther),
+      ("D414", 0, .endoscopicBiopsy), ("D414-2", 0, .eusFna),
+      ("D415", 0, .transbronchialLungBiopsy), ("D415-2", 0, .ebusTbna),
+      ("D415-3", 0, .navigatedLungBiopsy), ("D415-4", 0, .virtualBronchoscopyBiopsy),
+      ("D415-5", 0, .transbronchialCryobiopsy), ("D415-6", 0, .parietalPleuralCryobiopsy),
+      ("D416", 1, .thoracotomyTissue),
+      ("D416", 2, .laparotomyTissue), ("D418", 1, .cervicalMucus),
+      ("D418", 2, .vaginalCervicalTissue), ("D418", 3, .endometrialTissue),
+      ("D419", 1, .gastricDuodenalFluid), ("D419", 2, .pleuralAsciticFluid),
+      ("D419", 3, .arterialBlood), ("D419", 4, .anteriorChamberFluid),
+      ("D419", 5, .adrenalVenousSampling), ("D419", 6, .nasalPharyngealSwab),
+      ("D419-2", 0, .intraocularFluidExamination)]
+  let tissueItems : List (Nat × Nat × SpecimenCollection.Item) :=
+    [(1, 0, .skinTissue), (2, 0, .muscleTissue), (3, 0, .bonePelvisSpineTissue),
+      (4, 1, .posteriorEyeTissue), (4, 2, .otherEyeTissue), (5, 0, .earTissue),
+      (6, 0, .nasalSinusTissue), (7, 0, .oralTissue), (8, 0, .pharyngolaryngealTissue),
+      (9, 0, .thyroidTissue), (10, 0, .breastTissue), (11, 0, .rectalTissue),
+      (12, 0, .testisEpididymisTissue), (13, 0, .peripheralNerveTissue), (14, 0, .myocardiumTissue)]
+  let tissue := tissueItems.map fun (number, branch, item) =>
+    pointRow "D417" (reprStr item) "base" number branch (some (SpecimenCollection.basePoints item))
+  let collections := collectionItems.map fun (code, number, item) =>
+    pointRow code (reprStr item) "base" number 0 (some (SpecimenCollection.basePoints item))
+  let collectionInfants : List (String × Nat × SpecimenCollection.Item) :=
+    [("D400", 2, .venousBlood), ("D401", 0, .ventricularPuncture),
+      ("D402", 0, .suboccipitalPuncture), ("D403", 0, .lumbarPuncture),
+      ("D404", 0, .sternalMarrowPuncture), ("D404-2", 0, .marrowBiopsy),
+      ("D405", 0, .jointPuncture), ("D407", 0, .renalCystHydronephrosisPuncture),
+      ("D416", 0, .laparotomyTissue), ("D417", 0, .skinTissue), ("D419", 2, .pleuralAsciticFluid), ("D419", 3, .arterialBlood),
+      ("D419", 4, .anteriorChamberFluid), ("D419", 5, .adrenalVenousSampling)]
+  let collectionNotes := collectionInfants.map fun (code, noteNumber, item) =>
+    pointRow code "infant" "note" noteNumber 0 (some (SpecimenCollection.infantPoints item 0))
   return [generalUrine] ++ specialUrine ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
@@ -295,7 +338,11 @@ private unsafe def points : MetaM (List Json) := do
     endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap, infectionClassCap] ++
     hepatitis ++ hepatitisNotes ++ autoantibodies ++ autoantibodyNotes ++ plasmaProteins ++ [igeCap] ++
     cellular ++ bacterialMicroscopy ++ [smear] ++ culture ++ cultureNotes ++ susceptibility ++
-    isolation ++ microbiologyHeadings ++ otherMicrobiology ++ nuclearMicrobiology ++ microbiologyNotes ++ microbiologyReferences ++ judgment ++ judgmentNotes ++ specimens
+    isolation ++ microbiologyHeadings ++ otherMicrobiology ++ nuclearMicrobiology ++ microbiologyNotes ++ microbiologyReferences ++ judgment ++ judgmentNotes ++ specimens ++ collections ++ tissue ++ collectionNotes ++
+    [pointRow "D415" "guideSheath" "note" 1 0 (some 500),
+      pointRow "D415" "ctFluoroscopy" "note" 2 0 (some 1000),
+      pointRow "D415" "endomicroscopy" "note" 3 0 (some 1500),
+      pointRow "D415-4" "guideSheath" "note" 0 0 (some 500)]
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

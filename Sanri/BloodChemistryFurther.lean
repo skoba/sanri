@@ -184,6 +184,16 @@ def pointsRule : Rule Context Nat :=
   ⟨"primary/D007/item/9..24+primary/D007/item/35", primary "PDF179〜180頁 D007の9〜24及び35の血液ガス分析",
     fun c p => c.item ≠ .urinarySulfatedBileAcids → c.item.scheduledPoints = some p⟩
 
+/-- 一物質の単価。複数物質は実施の識別を保ったまま集計へ渡す。 -/
+def organicAcidRateRule : Rule Context Nat :=
+  ⟨"notice/D007/paragraph/11", notice "PDF356頁 D007(11)",
+    fun c p => ∀ acid, c.item = .organicAcid acid → p = 47⟩
+
+theorem organicAcidMatchesSchedule (acid : OrganicAcid) (p : Nat) :
+    organicAcidRateRule.holds { item := .organicAcid acid } p ↔
+      Item.scheduledPoints (.organicAcid acid) = some p := by
+  simp [organicAcidRateRule, Item.scheduledPoints, eq_comm]
+
 def urinaryReferenceRule : Rule Context Nat :=
   ⟨"notice/D007/paragraph/15", notice "PDF356頁 D007(15)", fun c p =>
     c.item = .urinarySulfatedBileAcids → Item.scheduledPoints Item.cholesterolFraction = some p⟩

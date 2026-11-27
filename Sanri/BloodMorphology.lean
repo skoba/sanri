@@ -189,6 +189,30 @@ def bloodCountRule : Rule Context Unit :=
   ⟨"notice/D005/paragraph/4", notice "PDF338頁 D005(4)", fun c _ =>
     c.item = .completeBloodCount → ∃ counts, c.counts = some counts ∧ counts ≠ []⟩
 
+/-- 位相差・蛍光顕微鏡や併施した赤血球直径測定によって所定点数を変えない。 -/
+def microscopyRateRule : Rule Context Nat :=
+  ⟨"notice/D005/paragraph/5", notice "PDF338頁 D005(5)", fun c p =>
+    (c.item = .microscopicDifferential ∨ c.item = .boneMarrowPicture) → p = c.item.basePoints⟩
+
+def specialStainsNotice : Rule Context Nat :=
+  ⟨"notice/D005/paragraph/6", notice "PDF338頁 D005(6)", fun c p =>
+    StainPoints c p⟩
+
+def stainKindRule (kind : Stain) : Rule Context (List Stain) :=
+  let suffix := match kind with
+    | .oxidase => "a"
+    | .peroxidase => "i"
+    | .alkalinePhosphatase => "u"
+    | .pas => "e"
+    | .iron => "o"
+    | .supravital => "ka"
+    | .lipid => "ki"
+    | .esterase => "ku"
+  ⟨"notice/D005/paragraph/6/" ++ suffix, notice ("PDF338頁 D005(6) " ++ suffix),
+    fun c charged =>
+      (c.item = .microscopicDifferential ∨ c.item = .boneMarrowPicture) →
+      ∀ stains, c.stains = some stains → (kind ∈ charged ↔ kind ∈ stains)⟩
+
 def malariaMethodRule : Rule Context Unit :=
   ⟨"notice/D005/paragraph/7", notice "PDF338頁 D005(7)", fun c _ =>
     c.item = .dnaContainingRedCellCount → c.meetsMalariaTestRequirements = some true⟩
@@ -197,6 +221,35 @@ def resistanceMethodRule : Rule Context Unit :=
   ⟨"notice/D005/paragraph/8", notice "PDF338頁 D005(8)", fun c _ =>
     c.item = .redCellResistance →
       ∃ method, c.resistanceMethod = some method ∧ method ≠ .other⟩
+
+private def resistanceKind (method : ResistanceMethod) (suffix page : String) :
+    Rule Context Unit :=
+  ⟨"notice/D005/paragraph/8/" ++ suffix, notice ("PDF" ++ page ++ "頁 D005(8) " ++ suffix),
+    fun c _ => c.item = .redCellResistance → c.resistanceMethod = some method →
+      resistanceMethodRule.holds c ()⟩
+
+def sugarWaterRule := resistanceKind .sugarWater "a" "338"
+def hamRule := resistanceKind .ham "i" "338"
+def crossBeetRule := resistanceKind .crossBeet "u" "338"
+def parpartRule := resistanceKind .parpart "e" "338"
+def sanfordRule := resistanceKind .sanford "o" "339"
+
+structure AntigenEvidence where
+  monoclonalMethodWithClassification : Bool
+  qualifyingDisease : Bool
+  approvedAntibody : Bool
+
+def antigenMethod : Rule AntigenEvidence Unit :=
+  ⟨"notice/D005/paragraph/12/a", notice "PDF339頁 D005(12)ア",
+    fun c _ => c.monoclonalMethodWithClassification = true⟩
+
+def antigenDisease : Rule AntigenEvidence Unit :=
+  ⟨"notice/D005/paragraph/12/i", notice "PDF339頁 D005(12)イ",
+    fun c _ => c.qualifyingDisease = true⟩
+
+def antigenSeries : Rule AntigenEvidence Nat :=
+  ⟨"notice/D005/paragraph/12/u", notice "PDF339頁 D005(12)ウ",
+    fun c units => c.approvedAntibody = true ∧ units = 1⟩
 
 def a1cMonthlyRule : Rule Context Unit :=
   ⟨"notice/D005/paragraph/9", notice "PDF339頁 D005(9)", fun c _ =>
