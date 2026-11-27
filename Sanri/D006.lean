@@ -334,7 +334,7 @@ def fibrinMonomerRule : Rule Context Unit :=
     (∃ target ∈ [Thrombosis.dic, .venous, .pulmonaryEmbolism], c.fibrinMonomerTarget = some target) ∧
     c.fibrinMonomerDiagnosisAndFollowup = some true
 
-private def competingMarkers : List Item := [.tat, .prothrombinFragment, .fibrinMonomer]
+def competingMarkers : List Item := [.tat, .prothrombinFragment, .fibrinMonomer]
 
 def MarkerSelection (c : Context) : Prop :=
   ∃ surveyed, c.simultaneousSurvey = some surveyed ∧
