@@ -14,7 +14,7 @@ from .audit_residual_urine import FILES, load_snapshot
 from .fee_coverage import clause_paths
 from .fee_ledger import INVENTORY, compare_points, load_lean, read_index
 from .local_pdf import verified_pdf_pages
-from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE
+from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, R08_DOWNLOADS
 from .r08_inventory import compact, notice_spans
 from .procedure_master import (
     ARCHIVE_SHA256, INDEX_COLUMNS, LOCAL, _write, index_rows,
@@ -63,7 +63,11 @@ def code_kind(record):
     return None
 
 
-UNNUMBERED = {"D019-2", "D021", "D022"}
+UNNUMBERED = {"D006-23", "D019-2", "D021", "D022"}
+
+
+def normalized_name(name):
+    return "".join(unicodedata.normalize("NFKC", name).split())
 
 
 def correspondence(record, by_key, reviewed_names=None):
@@ -76,6 +80,19 @@ def correspondence(record, by_key, reviewed_names=None):
         return None, [], "非単価"
     if kind is None:
         return None, [], "種別の射影なし"
+    name = normalized_name(record.name)
+    reviewed_item = (reviewed_names or {}).get((record.division, number), {}).get(name)
+    if (record.division, number, kind) == ("D000", 0, "note") and reviewed_item:
+        general = by_key.get(("D000", 0, "general"), [])
+        named = [p for p in general if p["item"] == reviewed_item and p["points"] == record.points]
+        if len(named) == 1:
+            return named[0], general, "名称による"
+    if (record.division, record.item, record.ref_division, record.ref_item, reviewed_item) == (
+            "D012", 42, "D012", 39, "herpesSkin"):
+        candidates = by_key.get(("D012", 42, "base"), [])
+        named = [p for p in candidates if item_key(p)[1] == reviewed_item and p["points"] == record.points]
+        if len(named) == 1:
+            return named[0], candidates, "名称による"
     if kind == "reference":
         if (record.ref_chapter, record.ref_part) != (2, 3):
             return None, [], "準用元の章・部が対象外"
@@ -100,9 +117,7 @@ def correspondence(record, by_key, reviewed_names=None):
         return matches[0], candidates, "準用元・通知" if kind == "reference" else (
             "項番表記差" if number != record.item else "構造・点数")
     if len(matches) > 1:
-        name = unicodedata.normalize("NFKC", record.name)
-        species = (reviewed_names or {}).get((record.division, number), {}).get(name)
-        named = [p for p in matches if p["item"].rsplit(".", 1)[-1] == species]
+        named = [p for p in matches if p["item"].rsplit(".", 1)[-1] == reviewed_item]
         if len(named) == 1:
             return named[0], candidates, "名称による"
     return None, candidates, "複数候補" if len(matches) > 1 else "根拠不足"
@@ -174,6 +189,8 @@ FACILITY_ITEMS = {
 
 
 def inpatient_reference(record):
+    if (record.division, record.item, code_kind(record)) == ("D007", 65, "note"):
+        return "primary/D007/note/unnumbered/2"
     if record.in_out != "1":
         return None
     if record.division == "D026" and record.item in {8, 9}:
@@ -206,8 +223,9 @@ def age_comparison(record, point, by_key, records_by_code, archive_lines):
 def compare_attributes(record, point, method, clauses, by_key, records_by_code, archive_lines):
     result = {}
     if reference := inpatient_reference(record):
-        result["in_out"] = grade(MATCH, "モデルでは入院側参照。マスターも入院のみ",
-                                 clauses=[reference])
+        if record.in_out == "1":
+            result["in_out"] = grade(MATCH, "モデルでは入院側参照。マスターも入院のみ",
+                                     clauses=[reference])
         result["points"] = grade(UNMODELED, "入院側参照につき単価は外来モデルの範囲外",
                                  clauses=[reference])
     if point:
@@ -400,7 +418,26 @@ CHOICES += same_division_choices("electrophoresisGroup", "D015", "4/i", "specime
                                  ("wholeAntiserum", "specificAntiserum", "drugImmunofixation"))
 
 
+# D004-2 (7) の「1」は簡易・複雑の三つの基本項目に射影する。
+HEMATOLOGIC_PARTNERS = (
+    ("D006-2", "hematopoieticTumorGene"),
+    ("D006-6", "immuneRearrangement"),
+    ("D006-14", "flt3"),
+    ("D006-16", "jak2"),
+)
+CHOICES += tuple(
+    ("hematologicMonthlyGroup", "notice/D004-2/paragraph/7", "exclusion_month", a, b)
+    for a, b in (
+        *product((("D004-2", item) for item in ("drugAid", "otherSimple", "complex")),
+                 HEMATOLOGIC_PARTNERS),
+        *combinations(HEMATOLOGIC_PARTNERS, 2),
+    )
+)
+
+
 FREQUENCIES = {
+    ("D000", "emergencyAddition"): ("121", 1, "primary/ch2-part3-section1-subsection1/general/1", "Examinations.assessSpecimen"),
+    ("D000", "rapidAddition"): ("121", 5, "primary/ch2-part3-section1-subsection1/general/3", "Examinations.assessSpecimen"),
     ("D007", "cardiacMyosinLightChainI"): ("121", 1, "notice/D007/paragraph/38", "withMyosinHistory"),
     ("D007", "infliximabQualitative"): ("53", 3, "notice/D007/paragraph/49", "withInfliximabHistory"),
     ("D007", "vegf"): ("131", 1, "notice/D007/paragraph/51", "withVegfHistory"),
@@ -415,6 +452,31 @@ FREQUENCIES.update({
     for name in ("urineFecal", "geneticChromosomal", "hematological", "biochemicalI",
                  "biochemicalII", "immunological", "microbiological")
 })
+FREQUENCIES.update({
+    ("D001", "myoinositol"): ("147", 1, "notice/D001/paragraph/5", "D001.myoinositolRule"),
+    ("D001", "prostaglandinEMajorMetabolite"): ("144", 1, "notice/D001/paragraph/6/a", "D001.pgeRule"),
+    ("D001", "oxalate"): ("147", 1, "notice/D001/paragraph/7", "D001.oxalateRule"),
+    ("D001", "lFabp"): ("144", 1, "notice/D001/paragraph/8", "D001.lfabpRule"),
+    ("D007", "lipoproteinA"): ("144", 1, "notice/D007/paragraph/19", "lipoproteinIntervalRule"),
+    ("D007", "pentosidine"): ("144", 1, "notice/D007/paragraph/25", "pentosidineRule"),
+    ("D007", "inulin"): ("146", 1, "notice/D007/paragraph/26", "inulinRule"),
+    ("D007", "remnantLipoproteinCholesterol"): ("144", 1, "notice/D007/paragraph/33", "remnantThreeMonthInterval"),
+    ("D006-6", "immuneRearrangement"): ("146", 1, "notice/D006-6/paragraph/1", "Immune.frequencyRule"),
+    ("D006-16", "jak2"): ("53", 1, "notice/D006-16/paragraph/1", "Jak2.indicationRule"),
+    ("D009", "22"): ("131", 1, "notice/D009/paragraph/13", "D009.p53Rule"),
+    ("D006-30", "retinalDystrophy"): ("53", 1, "notice/D006-30/paragraph/1", "retinalRule"),
+    ("D419", "gastricDuodenalFluid"): ("141", 1, "primary/D419/item/1", "確認済みの一連の既算定"),
+    ("D419", "adrenalVenousSampling"): ("141", 1, "primary/D419/item/5", "確認済みの一連の既算定"),
+})
+RENAL_FREQUENCIES = {("D001", item) for item in ("transferrin", "albuminQuantitative", "typeIVCollagen")}
+FREQUENCIES.update({key: ("144", 1, "notice/D001/paragraph/3", "D001.renalRule")
+                    for key in RENAL_FREQUENCIES})
+FREQUENCY_EXCEPTIONS = {
+    ("D001", "prostaglandinEMajorMetabolite"): "医学的必要性による月1回と記録",
+    ("D001", "oxalate"): "通知が原則とする上限。例外の詳細は欄から読めない",
+    ("D001", "lFabp"): "医学的必要性と摘要記載",
+}
+
 FREQUENCY_UNITS = {"53": "患者当り", "121": "日", "131": "月", "138": "週", "141": "一連",
                    "144": "3月", "145": "4月", "146": "6月", "147": "12月"}
 
@@ -436,10 +498,61 @@ def relation_positions(table, rel):
     return {"lines": [entry["line"] for entry in rel["rows"]]}
 
 
-def compare_tables(tables, mapping):
+def code_reason(record, candidates, method):
+    if method == "非単価":
+        return "率・減算等の非単価"
+    if record.in_out == "1" or inpatient_reference(record):
+        return "入院のみ"
+    if record.ref_division:
+        return "準用の由来・項目未確定"
+    if method == "複数候補":
+        return "告示の検査種類との対応未確定"
+    if record.division == "D006-4":
+        if record.item == 5:
+            return "複数疾患の包括点数候補の同定未確認"
+        if record.item == 4:
+            return "通知の疾患枝と等級の対応未確認"
+    if record.bundle_group and code_kind(record) == "note":
+        return "包括点数候補の同定未確認"
+    if not candidates:
+        return "台帳に同じ区分・項番・種別の項目なし"
+    return "点数又は種別の対応未確認"
+
+
+def relation_scope(codes, mapping, locations):
+    unknown_location = any(c not in mapping and c not in locations for c in codes)
+    if unknown_location:
+        return "相手の区分未同定"
+    if any(c not in mapping for c in codes):
+        return "対象範囲外（相手が検体検査外）"
+    if any(mapping[c]["master"]["入外適用区分"] == "1" for c in codes):
+        return "対象範囲外（入院のみ）"
+    if any(mapping[c]["lean"] is None for c in codes):
+        return "検体検査のコード未対応"
+    return "両端対応済み"
+
+
+def reason_counts(rows):
+    return Counter(row.get("reason_type", row["classification"]) for row in rows)
+
+
+def collection_inclusion(parent, child_location, rel):
+    if not parent or parent["kind"] != "base" or rel["unit"] != "3" or rel["special"]:
+        return None
+    if parent["division"] in {"D412", "D412-2"} and child_location in {
+            (2, 3, "D208"), (2, 3, "D215")}:
+        division = parent["division"]
+        return grade(
+            REPRESENTATION, "親の非別算定規則と子の検査区分が対応。各行の実施目的は表から読めない",
+            reason_type="非別算定の区分・同時単位の射影",
+            clauses=[f"notice/{division}/paragraph/unnumbered"])
+    return None
+
+
+def compare_tables(tables, mapping, locations):
     inverse = defaultdict(set)
     for code, entry in mapping.items():
-        if (p := entry["lean"]) and p["kind"] == "base":
+        if (p := entry["lean"]) and p["kind"] in {"base", "general"}:
             inverse[item_key(p)].add(code)
     glycemic = (inverse[("D005", "hemoglobinA1c")] | inverse[("D007", "glycatedAlbumin")]
                | inverse[("D007", "anhydroglucitol")])
@@ -449,6 +562,8 @@ def compare_tables(tables, mapping):
     by_choice = defaultdict(list)
     by_frequency = defaultdict(list)
     elf_rows = defaultdict(list)
+    general_day_rows = []
+    inclusion_pairs = set()
     glycemic_pairs, glycemic_counts = defaultdict(list), defaultdict(list)
     for table, relations in tables.items():
         for rel in relations:
@@ -457,11 +572,38 @@ def compare_tables(tables, mapping):
             keys = frozenset(item_key(p) for p in points if p)
             monthly_pair = table == "exclusion_month" and rel["direction"] == "3" and len(set(codes)) == 2
             monthly_count = table == "frequency" and (rel["unit"], rel["limit"]) == ("131", 1)
-            if (monthly_pair or monthly_count) and rel["special"] and set(codes) <= glycemic:
+            scope = None
+            if table.startswith("exclusion_"):
+                scope = relation_scope(codes, mapping, locations)
+                rel["structure"] = scope
+                rel["locations"] = [locations.get(code) for code in codes]
+            if table == "inclusion" and codes[0] not in mapping:
+                reason = ("対象範囲外（親が検体検査外）" if codes[0] in locations
+                          else "親の区分未同定")
+                comparison = grade(UNKNOWN, "親の区分による対象範囲の分類", reason_type=reason)
+            elif table == "inclusion" and (included := collection_inclusion(
+                    points[0], locations.get(codes[1]), rel)):
+                comparison = included
+            elif table == "inclusion" and codes[1] not in mapping:
+                comparison = grade(UNKNOWN, "親の規則と子の具体的な関連費用の対応未確認",
+                                   reason_type="子が検体検査外・非別算定の条件未照合")
+            elif scope and scope != "両端対応済み":
+                comparison = grade(UNKNOWN, "背反の相手・入外・対応の構造", reason_type=scope)
+            elif (monthly_pair or monthly_count) and rel["special"] and set(codes) <= glycemic:
                 comparison = grade(REPRESENTATION, "通常月の件数射影。特例条件は通知で確認",
                                    clauses=GLYCEMIC_SOURCES)
                 found = glycemic_pairs if monthly_pair else glycemic_counts
                 found[frozenset(codes)].append(relation_positions(table, rel))
+            elif (table == "exclusion_day" and not rel["special"]
+                  and keys == {("D000", "emergencyAddition"), ("D000", "rapidAddition")}
+                  and rel["direction"] in {"1", "2"}
+                  and item_key(points[int(rel["direction"]) - 1])[1] == "emergencyAddition"):
+                comparison = grade(
+                    MATCH, "緊急加算を算定する同日に迅速加算を別算定できない",
+                    reason_type="同日・優先方向の射影",
+                    clauses=["primary/ch2-part3-section1-subsection1/general/1"],
+                    lean_definition="Examinations.assessSpecimen")
+                general_day_rows.append(relation_positions(table, rel))
             elif table.startswith("exclusion_") and (choices := choice_lookup.get(keys)):
                 projections = []
                 for fn, clause, scope in choices:
@@ -471,24 +613,52 @@ def compare_tables(tables, mapping):
                     projections.append({"clause": clause, "definition": fn, "scope": scope, "same": same})
                 if any(p["same"] for p in projections):
                     classification = MATCH
-                elif all(p["scope"] is None for p in projections):
-                    classification = UNMODELED
+                elif not rel["special"] and rel["direction"] == "3" and any(
+                        p["scope"] is not None and p["scope"] != table for p in projections):
+                    classification = REPRESENTATION
                 else:
                     classification = UNKNOWN
                 comparison = grade(
                     classification,
                     "相手と採否の射影を照合。適用範囲・群の履歴単位・特例は条項ごとに確認",
-                    clauses=[p["clause"] for p in projections], projections=projections)
+                    clauses=[p["clause"] for p in projections], projections=projections,
+                    reason_type=("単位・同一性の差" if classification == REPRESENTATION else
+                                 "優先方向の対応未確認" if rel["direction"] != "3" else
+                                 "特例条件未確認" if rel["special"] else
+                                 "履歴単位未確定" if classification == UNKNOWN else "同じ単位・採否の射影"))
             elif table == "frequency" and points[0] and (expected := FREQUENCIES.get(item_key(points[0]))):
                 unit, limit, clause, fn = expected
-                same = (rel["unit"], rel["limit"]) == (unit, limit) and not rel["special"]
+                key = item_key(points[0])
+                exception = FREQUENCY_EXCEPTIONS.get(key)
+                same = ((rel["unit"], rel["limit"]) == (unit, limit)
+                        and (not rel["special"] or exception is not None))
+                shared = key in RENAL_FREQUENCIES or key == ("D006-30", "retinalDystrophy")
+                representation = (shared or rel["special"] or fn == "elfSixMonthInterval"
+                                  or key == ("D000", "rapidAddition"))
                 if same:
                     by_frequency[item_key(points[0])].append(relation_positions(table, rel))
                 comparison = grade(
-                    (REPRESENTATION if fn == "elfSixMonthInterval" else MATCH) if same else UNKNOWN,
+                    (REPRESENTATION if representation else MATCH)
+                    if same else UNKNOWN,
                     "単位・回数の射影。月の起算と患者・機関の範囲は欄から確定しない" if same else
                     "回数・単位又は特例の条件に照合残件あり",
-                    clauses=[clause], lean_definition=fn, lean_unit=unit, lean_limit=limit)
+                    clauses=[clause], lean_definition=fn, lean_unit=unit, lean_limit=limit,
+                    reason_type=("単位・回数の射影" if same else "特例条件未確認" if rel["special"]
+                                 else "単位・回数未一致"),
+                    shared_scope=shared, notice_exception=exception,
+                    unreadable=["月の起算", "患者・機関の範囲", "一連の範囲",
+                                *(["特例の具体的な適用条件"] if rel["special"] else [])])
+            elif (table == "frequency" and points[0] and points[0]["kind"] == "base"
+                  and points[0]["division"] == "D009" and (rel["unit"], rel["limit"]) == ("53", 1)
+                  and not rel["special"]):
+                comparison = grade(
+                    REPRESENTATION, "通常の診断経路では診断上の一連を照会。表は患者当りのコード別枠",
+                    clauses=["primary/D009/note/1", "notice/D009/paragraph/1"],
+                    lean_definition="D009.EpisodeAvailable",
+                    reason_type="患者当りと診断上の一連の差",
+                    unreadable=["診断上の一連の範囲", "管理料経路", "通知の例外"])
+            elif table == "frequency" and mapping[codes[0]]["master"]["入外適用区分"] == "1":
+                comparison = grade(UNKNOWN, "入院の回数行", reason_type="対象範囲外（入院のみ）")
             elif table == "inclusion" and rel["unit"] == "3" and not rel["special"] and all(points) and (
                 item_key(points[0]) == ("D007", "elfScore") and
                 item_key(points[1]) in {("D007", "procollagenIII"), ("D007", "hyaluronicAcid")}
@@ -516,21 +686,43 @@ def compare_tables(tables, mapping):
                                    relation_flags=row[9:13])
             else:
                 comparison = grade(UNKNOWN, "関係の適用条件・相手又は単位の対応が未確認")
+            if "reason_type" not in comparison:
+                if comparison["classification"] == UNKNOWN:
+                    reason = ("特例条件未確認" if rel.get("special") else
+                              "検体検査のコード未対応" if not all(points) else
+                              "対応する条項・適用単位未確認")
+                else:
+                    reason = comparison["classification"]
+                comparison["reason_type"] = reason
             rel.update(comparison)
-    reverse = {}
+            if table == "inclusion" and all(points):
+                inclusion_pairs.add(keys)
+    reverse = {
+        "primary/ch2-part3-section1-subsection1/general/1/day": grade(
+            MATCH if general_day_rows else UNKNOWN, "緊急加算の優先方向と同日背反を検索",
+            clauses=["primary/ch2-part3-section1-subsection1/general/1"],
+            electronic_rows=general_day_rows)
+    }
     for fn, clause, scope, a, b in CHOICES:
         hits = by_choice[frozenset((a, b)), clause]
         reverse[f"{clause}/{a[1]}/{b[1]}"] = grade(
             MATCH if any(hit["same_projection"] for hit in hits) else UNKNOWN,
             "対応した項目対のテーブル行を検索。関係なしの判定には使わない",
             clauses=[clause], lean_definition=fn, lean_scope=scope,
-            mapping_sizes=[len(inverse[a]), len(inverse[b])], electronic_rows=hits)
+            mapping_sizes=[len(inverse[a]), len(inverse[b])], electronic_rows=hits,
+            reason_type=("同じ単位・採否の射影" if any(hit["same_projection"] for hit in hits) else
+                         "単位違い" if any(scope and hit["table"] != scope for hit in hits) else
+                         "コード未対応" if not (inverse[a] and inverse[b]) else
+                         "包括側に同じ項目対あり・条件未照合" if frozenset((a, b)) in inclusion_pairs else
+                         "特例・方向・適用単位未確認" if hits else "不明"))
     for rel in tables["frequency"]:
         rel["unit_label"] = FREQUENCY_UNITS.get(rel["unit"])
     for key, (unit, limit, clause, fn) in FREQUENCIES.items():
         hits = by_frequency[key]
         reverse[f"{clause}/{key[1]}"] = grade(
-            MATCH if hits else UNKNOWN, "対応コードの単位・回数で検索",
+            (REPRESENTATION if key in RENAL_FREQUENCIES or key in FREQUENCY_EXCEPTIONS
+             or key == ("D006-30", "retinalDystrophy") or fn == "elfSixMonthInterval" or key == ("D000", "rapidAddition") else MATCH)
+            if hits else UNKNOWN, "対応コードの単位・回数で検索",
             clauses=[clause], lean_definition=fn, unit=unit, limit=limit, electronic_rows=hits)
     for child in (("D007", "procollagenIII"), ("D007", "hyaluronicAcid")):
         hits = elf_rows[child]
@@ -556,6 +748,39 @@ def compare_tables(tables, mapping):
                                for _, entry in members),
             electronic_rows=relations)
     return reverse
+
+
+def compare_count_attributes(mapping, frequencies, records):
+    by_code = defaultdict(list)
+    for row in frequencies:
+        if row["classification"] in {MATCH, REPRESENTATION}:
+            by_code[row["codes"][0]].append(row)
+    for code, entry in mapping.items():
+        record = records[code]
+        attributes = entry["attributes"]
+        rows = by_code[code]
+        if rows:
+            evidence = {"clauses": sorted({clause for row in rows for clause in row["clauses"]}),
+                        "frequency_lines": [line for row in rows
+                                            for line in relation_positions("frequency", row)["lines"]]}
+            if record.max_count > 0 and all(record.max_count == row["limit"] for row in rows):
+                attributes["max_count"] = grade(
+                    REPRESENTATION, "数値が一致。コード上限欄から通知の期間・共有範囲は読めない",
+                    reason_type="回数の数値のみ対応", **evidence)
+            else:
+                attributes["max_count"].setdefault(
+                    "reason_type", "上限なしの欄と別表の制限" if record.max_count == 0
+                    else "上限欄と別表の数値の対応未確定")
+            attributes["max_count_handling"] = grade(
+                UNKNOWN, "条項は算定上限を規定。超過時の点数表上の処理との同値は未確認",
+                reason_type="上限超過処理の対応未確認", **evidence)
+        for field in ("max_count", "max_count_handling"):
+            attributes[field].setdefault("reason_type", "対応する頻度条項未確認")
+
+
+def count_buckets(counts):
+    return [{"reason_type": reason, "special": special, "count": count}
+            for (reason, special), count in counts.items()]
 
 
 def combination_reviews(reverse, tables, mapping):
@@ -638,8 +863,9 @@ def pack_inclusion(relations):
     result_ids = {}
     rows = []
     for rel in relations:
-        evidence = {k: rel[k] for k in ("classification", "reason", "clauses") if k in rel}
-        key = evidence["classification"], evidence["reason"], tuple(evidence.get("clauses", ()))
+        evidence = {k: rel[k] for k in ("classification", "reason", "reason_type", "clauses") if k in rel}
+        key = (evidence["classification"], evidence["reason"], evidence.get("reason_type"),
+               tuple(evidence.get("clauses", ())))
         if key not in result_ids:
             result_ids[key] = len(results)
             results.append(evidence)
@@ -706,13 +932,33 @@ def main():
     require(INVENTORY.resolve() == INVENTORY, "入出力は tensuhyo/inventory 内に限る")
     names_path = INVENTORY / "specimen-reviewed-names.json"
     name_review = read_index(names_path.name) if names_path.exists() else []
-    reviewed_names = {(r["division"], r["number"]): r["names"] for r in name_review}
+    reviewed_names = {(r["division"], r["number"]): {
+        normalized_name(name): item for name, item in r["names"].items()} for r in name_review}
+    name_evidence = {(r["division"], r["number"], normalized_name(name)): proof
+                     for r in name_review for name, proof in r.get("evidence", {}).items()}
     require(len(reviewed_names) == len(name_review), "名称確認の区分・項番が重複")
     notice = read_index("notice-impact.json")
     require(notice["as_of"] == DAY.isoformat(), "準用索引の基準日が異なる")
     references = {r["master"]["診療行為コード"]: r for r in notice["references"]}
     notice_pages = verified_pdf_pages(NOTICE_PDF, NOTICE_SOURCE["sha256"])
     notice_blocks = notice_spans(notice_pages, read_index("notice-index.json"), "paragraph")
+    revisions = read_index("notice-revisions.json")
+    require(revisions["as_of"] == DAY.isoformat(), "改正索引の基準日が異なる")
+    amendment_hits = defaultdict(list)
+    searched_amendments = set()
+    for amendment in revisions["amendments"]:
+        source = amendment["source"]
+        filename = source["path"].rsplit("/", 1)[-1]
+        pages = verified_pdf_pages(NOTICE_PDF.parent / "amendments" / filename,
+                                   R08_DOWNLOADS["amendments"][filename])
+        searched_amendments.add(filename)
+        for change in amendment["changes"]:
+            division, page = change["code"], change["page"]
+            amendment_hits[division].append((
+                compact(pages[page - 1]), {"document": filename, "pdf_page": page,
+                                          "paragraph": change["paragraph"],
+                                          "applies_on_as_of": change["applies_on_as_of"]}))
+    require(searched_amendments == set(R08_DOWNLOADS["amendments"]), "登録改正と索引の資料が異なる")
     mapping = {}
     for index_line, row in enumerate(rows, 2):
         master = dict(zip(INDEX_COLUMNS, row, strict=True))
@@ -724,16 +970,27 @@ def main():
         item, candidates, method = correspondence(record, by_key, reviewed_names)
         clauses = sorted(clauses_by_division[record.division])
         name_candidates = []
-        if record.ref_division and not item:
+        if record.ref_division and (not item or method == "名称による"):
             key_name = compact(record.name)
             name_candidates = [{"clause": f"notice/{d}/paragraph/{n}", "pdf_pages": [start, end]}
                                for (d, n), blocks in notice_blocks.items()
                                if d in {record.division, record.ref_division}
                                for start, end, body in blocks
                                if len(key_name) >= 3 and key_name in body]
+        amendment_candidates = []
+        if record.ref_division and (not item or method == "名称による"):
+            amendment_candidates = [evidence for division in {record.division, record.ref_division}
+                                    for body, evidence in amendment_hits[division]
+                                    if len(key_name) >= 3 and key_name in body]
         mapping[code] = {
             "master": master, "archive_line": archive_lines[code], "index_line": index_line,
             "lean": item, "method": method, "candidates": candidates,
+            "reason_type": None if item else code_reason(record, candidates, method),
+            "name_evidence": name_evidence.get((record.division, record.item, normalized_name(record.name)))
+                             if method == "名称による" else None,
+            "amendment_name_candidates": amendment_candidates,
+            "reference_review_status": ("対象行の通知段落確認・準用先の項番表記差あり"
+                                       if method == "名称による" and record.ref_division else None),
             "source_candidates": clauses, "reference_search": references.get(code),
             "notice_exact_name_candidates": name_candidates,
             "master_extra": {"addition_key": record.addition_key, "facility_codes": record.facility_codes,
@@ -744,7 +1001,27 @@ def main():
 
     snapshot = registered_snapshot(set(mapping))
     tables, inclusion_lines = table_rows(snapshot, set(mapping))
-    reverse = compare_tables(tables, mapping)
+    locations = {r.code: (r.chapter, r.part, r.division) for r in records}
+    reverse = compare_tables(tables, mapping, locations)
+    compare_count_attributes(mapping, tables["frequency"], records_by_code)
+    parent_counts = defaultdict(Counter)
+    parent_division_counts = defaultdict(Counter)
+    day_counts = Counter()
+    for rel in tables["inclusion"]:
+        parent = rel["codes"][0]
+        bucket = (rel["reason_type"], rel["special"])
+        parent_counts[parent][bucket] += 1
+        parent_division_counts[locations.get(parent, (None, None, None))][bucket] += 1
+    for rel in tables["exclusion_day"]:
+        division_pair = tuple(tuple(loc or (None, None, None)) for loc in rel["locations"])
+        day_counts[division_pair] += 1
+    frequency_by_division = defaultdict(Counter)
+    for row in tables["frequency"]:
+        frequency_by_division[mapping[row["codes"][0]]["master"]["区分"]][row["reason_type"]] += 1
+    unmapped_by_division = defaultdict(Counter)
+    for entry in mapping.values():
+        if entry["lean"] is None:
+            unmapped_by_division[entry["master"]["区分"]][entry["reason_type"]] += 1
     point_sets = compare_points(points, [entry["master"] for entry in mapping.values()])
     point_differences = point_difference_evidence(point_sets, mapping, records_by_code, archive_lines)
     classifications = Counter()
@@ -753,6 +1030,10 @@ def main():
         for field, value in entry["attributes"].items():
             attribute_counts[field][value["classification"]] += 1
             classifications[value["classification"]] += 1
+    count_attribute_reasons = {
+        field: reason_counts(e["attributes"][field] for e in mapping.values())
+        for field in ("max_count", "max_count_handling")
+    }
     table_counts = {}
     for table, relations in tables.items():
         table_counts[table] = Counter(row["classification"] for row in relations)
@@ -760,7 +1041,7 @@ def main():
     classifications.update(value["classification"] for value in reverse.values())
     classifications.update(value["classification"] for value in point_differences)
     reference_status = Counter(
-        "通知・Lean対応" if entry["lean"] else (entry["reference_search"] or {}).get("status", "索引なし")
+        entry["reference_review_status"] or ("通知・Lean対応" if entry["lean"] else (entry["reference_search"] or {}).get("status", "索引なし"))
         for entry in mapping.values() if entry["master"]["準用元区分"]
     )
     summary = {
@@ -769,12 +1050,19 @@ def main():
         "name_based": sum(entry["method"] == "名称による" for entry in mapping.values()),
         "inclusion_source_rows": len(inclusion_lines),
         "reference_status": reference_status,
+        "amendment_name_hits": sum(bool(e["amendment_name_candidates"]) for e in mapping.values()),
         "unmapped_reference_with_notice_name_hits": sum(bool(e["notice_exact_name_candidates"])
                                                         for e in mapping.values()),
         "previous_point_set_differences": Counter(r["classification"] for r in point_differences),
         "lean_to_electronic": Counter(r["classification"] for r in reverse.values()),
         "methods": Counter(entry["method"] for entry in mapping.values()),
+        "count_attribute_reasons": count_attribute_reasons,
         "attributes": attribute_counts, "tables": table_counts,
+        "frequency_by_division": frequency_by_division,
+        "table_reason_types": {table: reason_counts(rows) for table, rows in tables.items()},
+        "unmapped_by_division": unmapped_by_division,
+        "unmapped_reason_types": sum(unmapped_by_division.values(), Counter()),
+        "reverse_reason_types": reason_counts(reverse.values()),
         "special": {table: sum(row.get("special", False) for row in rels)
                     for table, rels in tables.items()},
         "classifications": {key: classifications[key] for key in CLASSES},
@@ -785,6 +1073,15 @@ def main():
         "clause_index": {d: sorted(ids) for d, ids in clauses_by_division.items()},
         "mapping_by_code": mapping, "electronic_to_lean": tables, "lean_to_electronic": reverse,
         "previous_point_set_differences": point_differences,
+        "day_locations": [{"pair": pair, "count": count} for pair, count in day_counts.most_common()],
+        "inclusion_parents": {code: {"location": locations.get(code), "counts": count_buckets(counts)}
+                              for code, counts in parent_counts.items()},
+        "inclusion_parent_divisions": [{"location": location, "counts": count_buckets(counts)}
+                                       for location, counts in parent_division_counts.items()],
+        "reference_search_scope": {"baseline": "当該区分と準用元区分の登録通知段落",
+                                   "amendments": sorted(R08_DOWNLOADS["amendments"]),
+                                   "amendment_scope": "改正索引で区分を同定した指示頁の完全名称候補",
+                                   "limits": "行をまたぐ名称・略称・未索引箇所は要確認"},
         "three_combination_reviews": combination_reviews(reverse, tables, mapping),
     }
     report["electronic_to_lean"]["inclusion"] = pack_inclusion(tables["inclusion"])

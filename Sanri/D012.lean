@@ -77,7 +77,7 @@ inductive Item where
   | trichosporonAntibody
   | birdIgG
   | aav9 | aavRh74
-  deriving DecidableEq
+  deriving DecidableEq, Repr
 
 def Item.number : Item → Nat
   | .stsQual | .asoQual | .asoSemi | .asoQuant => 1

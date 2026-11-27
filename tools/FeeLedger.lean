@@ -150,7 +150,7 @@ private unsafe def points : MetaM (List Json) := do
   let immuneBlood := D011.ledgerItems.map fun item =>
     pointRow "D011" (toString item.number) "base" item.number item.branch (some item.points)
   let infection := D012.ledgerItems.map fun item =>
-    pointRow "D012" (toString item.number) "base" item.number 0 (some item.points)
+    pointRow "D012" (reprStr item) "base" item.number 0 (some item.points)
   let infectionCap := pointRow "D012" "viralCap" "note" 11 0
     (some D012.viralCapPoints)
   let infectionClassCap := pointRow "D012" "classCap" "note" 46 0
@@ -269,6 +269,16 @@ private unsafe def points : MetaM (List Json) := do
       { collections := (List.range n).map fun k => ⟨k, 0, .listed, .notPaired, none⟩
         usingInformationCommunicationEquipment := true
         patientWithNurseEtc := true }))
+  let rapid : Examinations.SpecimenItem :=
+    { kind := 0, executionPoints := 1, designatedRapidTest := true,
+      resultsExplainedOnTestDay := true, writtenResultsProvided := true, careBasedOnResults := true }
+  let emergencyContext : Examinations.SpecimenContext :=
+    { items := [rapid], urgent := true, performedInsideInstitution := true, time := { holiday := true } }
+  let generalAdditions := [
+    pointRow "D000" "emergencyAddition" "general" 0 0
+      ((Examinations.assessSpecimen emergencyContext).map (·.emergency)),
+    pointRow "D000" "rapidAddition" "general" 0 0
+      ((Examinations.assessSpecimen { items := [rapid] }).map (·.rapid))]
   let generalUrine := pointRow "D000" "generalUrine" "base" 0 0 (some D000.points)
   let specialUrine ← (← constructors ``UrineFecalTests.UrineSpecial).mapM fun ctor => do
     if ctor == ``UrineFecalTests.UrineSpecial.other then
@@ -341,7 +351,7 @@ private unsafe def points : MetaM (List Json) := do
       ("D419", 4, .anteriorChamberFluid), ("D419", 5, .adrenalVenousSampling)]
   let collectionNotes := collectionInfants.map fun (code, noteNumber, item) =>
     pointRow code "infant" "note" noteNumber 0 (some (SpecimenCollection.infantPoints item 0))
-  return [generalUrine] ++ remote ++ specialUrine ++ [stripRatio] ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
+  return [generalUrine] ++ generalAdditions ++ remote ++ specialUrine ++ [stripRatio] ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++

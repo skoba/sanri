@@ -5,7 +5,8 @@ import unittest
 
 from test_procedure_master import synthetic
 from tools.audit_specimen import (
-    correspondence, exclusion_key, pack_inclusion, table_rows, grade, UNKNOWN,
+    collection_inclusion, compare_count_attributes, compare_tables, correspondence, exclusion_key,
+    pack_inclusion, relation_scope, table_rows, grade, MATCH, REPRESENTATION, UNKNOWN,
 )
 from tools.procedure_master import parse_row
 
@@ -21,6 +22,48 @@ class SpecimenAuditTests(unittest.TestCase):
         self.assertIsNone(correspondence(record, candidates)[0])
         self.assertIsNone(correspondence(replace(record, item=2), candidates, review)[0])
         self.assertIsNone(correspondence(replace(record, points_text="13.00"), candidates, review)[0])
+
+    def test_exclusion_scope_keeps_unmapped_and_external_apart(self):
+        mapped = {"lean": {"item": "synthetic"}, "master": {"入外適用区分": "0"}}
+        unmapped = {**mapped, "lean": None}
+        inpatient = {**mapped, "master": {"入外適用区分": "1"}}
+        mapping = {"a": mapped, "b": unmapped, "c": inpatient}
+        locations = {"outside": (2, 1, "B999")}
+        self.assertEqual(relation_scope(["a", "a"], mapping, locations), "両端対応済み")
+        self.assertEqual(relation_scope(["a", "b"], mapping, locations), "検体検査のコード未対応")
+        self.assertEqual(relation_scope(["a", "c"], mapping, locations), "対象範囲外（入院のみ）")
+        self.assertEqual(relation_scope(["b", "outside"], mapping, locations),
+                         "対象範囲外（相手が検体検査外）")
+        self.assertEqual(relation_scope(["a", "missing"], mapping, locations), "相手の区分未同定")
+
+    def test_general_day_projection_preserves_direction_and_special(self):
+        mapping = {
+            code: {"lean": {"division": "D000", "kind": "general", "item": name},
+                   "master": {"入外適用区分": "0"}}
+            for code, name in (("a", "emergencyAddition"), ("b", "rapidAddition"))
+        }
+        rows = [{"codes": ["a", "b"], "direction": direction, "special": special, "rows": []}
+                for direction, special in (("1", False), ("2", False), ("1", True))]
+        compare_tables({"exclusion_day": rows, "frequency": [], "inclusion": []}, mapping, {})
+        self.assertEqual([r["classification"] for r in rows], [MATCH, UNKNOWN, UNKNOWN])
+
+    def test_collection_inclusion_leaves_special_or_different_unit_open(self):
+        parent = {"division": "D412", "kind": "base"}
+        location = (2, 3, "D215")
+        row = {"unit": "3", "special": False}
+        self.assertEqual(collection_inclusion(parent, location, row)["classification"], REPRESENTATION)
+        self.assertIsNone(collection_inclusion(parent, location, {**row, "special": True}))
+        self.assertIsNone(collection_inclusion(parent, location, {**row, "unit": "1"}))
+
+    def test_master_count_projection_leaves_error_handling_open(self):
+        record = replace(parse_row(synthetic()), max_count=1)
+        attributes = {field: grade(UNKNOWN, "合成例") for field in ("max_count", "max_count_handling")}
+        frequency = {"codes": ["a"], "limit": 1, "classification": MATCH,
+                     "clauses": ["test"], "rows": [{"line": 2}]}
+        compare_count_attributes({"a": {"attributes": attributes}}, [frequency], {"a": record})
+        self.assertEqual(attributes["max_count"]["classification"], REPRESENTATION)
+        self.assertEqual(attributes["max_count_handling"]["classification"], UNKNOWN)
+        self.assertEqual(attributes["max_count"]["frequency_lines"], [2])
 
     def test_master_layout_addition_fields(self):
         record = parse_row(synthetic(cells={38: "6033", 39: "B", 72: "42", 81: "448",

@@ -81,7 +81,7 @@ def compare_points(points: list[dict], master: list[dict]) -> dict:
     master_groups = defaultdict(list)
     separate = defaultdict(list)
     for row in points:
-        if row["kind"] in {"reference", "remote"}:
+        if row["kind"] in {"reference", "remote", "general"}:
             separate[f"lean_{row['kind']}"].append(row)
         else:
             lean_groups[row["division"], row["number"], row["kind"]].append(row)
