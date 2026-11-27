@@ -25,6 +25,10 @@ class FeeLedgerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             clause_paths({**rule, "kind": "notification"})
 
+    def test_numbered_note_branch_id(self):
+        self.assertEqual(clause_paths({"id": "primary/Z001/note/2/i", "kind": "primaryText"}),
+                         [("primary", "Z001", "note", "2", "i")])
+
     def test_point_groups(self):
         def lean(number, points, kind="base"):
             return {"division": "Z001", "number": number, "points": points, "kind": kind}

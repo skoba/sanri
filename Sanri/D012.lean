@@ -360,6 +360,7 @@ inductive RelatedTest where
   | local (item : Item)
   | dengueNs1 | dengueIgG | dengueIgM
   | bacterialCultureD018 | gastrointestinalCultureD018 | pertussisD023_13 | multiplexD023_25
+  | pneumoniaeD023_13
 
 
   deriving DecidableEq

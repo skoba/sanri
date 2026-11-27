@@ -233,6 +233,282 @@ theorem earlier_categories_iff (history : History.Snapshot (History.Performance 
     simp [List.mem_filterMap, and_assoc]
   · simp [earlierCategories, History.Snapshot.select, known] at h
 
+/-- 判断料本体の同日入力。包括照合はD025とB001の15を対象とする。
+照合できていない実施をリストに含めて通常算定へ進めない。 -/
+structure DailyJudgment where
+  site : History.Site
+  tests : List IncludedTest
+  coveredByD027 : Bool
+  claims : History.ClaimHistory MonthlyClaim
+  performances : History.Snapshot (History.Performance Test)
+
+def DailyJudgment.hasTest (c : DailyJudgment) (category : Category) : Bool :=
+  c.tests.any (fun entry => entry.separateEligibility == some true &&
+    standardizedCategoryFor entry.test == some category)
+
+def DailyJudgment.previousClaimLimit (c : DailyJudgment) (category : Category) : Option Bool :=
+  History.withinLimit c.claims c.site.monthScope (· == .category category) 0
+
+def DailyJudgment.firstDay (c : DailyJudgment) (category : Category) : Option Bool :=
+  (c.performances.select History.Performance.site c.site.monthScope
+    (fun row => decide (row.site.date.key < c.site.date.key) &&
+      standardizedCategoryFor row.item == some category)).map List.isEmpty
+
+def DailyJudgment.selectable (c : DailyJudgment) (category : Category) : Bool :=
+  c.hasTest category && !(c.coveredByD027 && includedInD027 category) &&
+    c.previousClaimLimit category == some true && c.firstDay category == some true
+
+def DailyJudgment.coverageResolved (c : DailyJudgment) : Bool :=
+  c.tests.all (fun t => t.separateEligibility.isSome)
+
+def DailyJudgment.Known (c : DailyJudgment) : Prop :=
+  c.claims.coverage.Covers c.site.monthScope ∧ c.performances.coverage.Covers c.site.monthScope ∧
+    c.coverageResolved = true
+
+private def dailyNotice (location : String) : Logic.SourceRef :=
+  ⟨.notification, "保医発0305第6号・別添1", "2026-10-07訂正後",
+    "PDF402頁 D026" ++ location, .checkedAgainstSource,
+    some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
+
+def initialDayRule : Logic.Rule DailyJudgment (List Category) :=
+  ⟨"notice/D026/paragraph/2", dailyNotice "(2)", fun c categories =>
+    ∀ category ∈ categories, c.previousClaimLimit category = some true ∧
+      c.firstDay category = some true⟩
+
+def sharedMonthlyLimit : Logic.Rule DailyJudgment (List Category) :=
+  ⟨"notice/D026/paragraph/4", dailyNotice "(4)", fun c categories =>
+    ∀ category ∈ categories, c.previousClaimLimit category = some true⟩
+
+def monthlyCategoryRule : Logic.Rule DailyJudgment (List Category) :=
+  ⟨"primary/D026/note/1",
+    ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "令和8年度改定・2026-10-22取得版",
+      "PDF192頁 D026注1", .checkedAgainstSource,
+      some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,
+    fun c categories => ∀ category ∈ categories, c.previousClaimLimit category = some true ∧
+      (c.coveredByD027 = true → includedInD027 category = false)⟩
+
+/-- 判断料の算定を選ぶ区分をすべて列挙した内訳の合計。 -/
+def multipleCategoriesRule : Logic.Rule (DailyJudgment × List Category) Nat :=
+  ⟨"notice/D026/paragraph/3", dailyNotice "(3)", fun (_, categories) points =>
+    points = (categories.map scheduledPoints).sum⟩
+
+def executionAndJudgmentRule : Logic.Rule (Nat × Nat) Nat :=
+  ⟨"notice/D026/paragraph/1", dailyNotice "(1)", fun (execution, judgment) total =>
+    total = execution + judgment⟩
+
+def DailyJudgment.categories (c : DailyJudgment) : List Category :=
+  allCategories.filter c.selectable
+
+def DailyJudgment.points (c : DailyJudgment) : Option Nat :=
+  if c.claims.coverage.Covers c.site.monthScope ∧ c.performances.coverage.Covers c.site.monthScope ∧
+      c.coverageResolved = true
+  then some ((c.categories.map scheduledPoints).sum)
+  else none
+
+theorem daily_categories_iff (c : DailyJudgment) (category : Category) :
+    category ∈ c.categories ↔ c.hasTest category = true ∧
+      (c.coveredByD027 = true → includedInD027 category = false) ∧
+      c.previousClaimLimit category = some true ∧ c.firstDay category = some true := by
+  have mem : category ∈ allCategories := by cases category <;> decide
+  cases covered : c.coveredByD027 <;>
+    simp [DailyJudgment.categories, DailyJudgment.selectable, List.mem_filter, mem,
+      Bool.and_eq_true, covered, and_assoc]
+
+theorem daily_points (c : DailyJudgment) (h : c.Known) (p : Nat) :
+    initialDayRule.holds c c.categories ∧ sharedMonthlyLimit.holds c c.categories ∧
+      monthlyCategoryRule.holds c c.categories ∧ multipleCategoriesRule.holds (c, c.categories) p
+      ↔ c.points = some p := by
+  have eligible := fun category (mem : category ∈ c.categories) =>
+    (daily_categories_iff c category).mp mem
+  have initial : initialDayRule.holds c c.categories :=
+    fun category mem => (eligible category mem).2.2
+  have shared : sharedMonthlyLimit.holds c c.categories :=
+    fun category mem => (eligible category mem).2.2.1
+  have monthly : monthlyCategoryRule.holds c c.categories :=
+    fun category mem => ⟨(eligible category mem).2.2.1, (eligible category mem).2.1⟩
+  simp [initial, shared, monthly, multipleCategoriesRule, DailyJudgment.points,
+    DailyJudgment.Known] at h ⊢
+  simp [h, eq_comm]
+
+/-- 判断料本体の算定候補と管理加算の届出・適合は別の確認事項。 -/
+structure ManagementEvidence where
+  day : DailyJudgment
+  facilityComplies : Option Bool := none
+  facilityNotified : Option Bool := none
+
+def ManagementEvidence.monthlyLimit (c : ManagementEvidence) : Option Bool :=
+  History.withinLimit c.day.claims c.day.site.monthScope (fun item => item.category?.isNone) 0
+
+def managementPrimary : Logic.Rule ManagementEvidence Nat :=
+  ⟨"primary/D026/note/4",
+    ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "令和8年度改定・2026-10-22取得版",
+      "PDF192頁 D026注4", .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩,
+    fun c p => c.facilityComplies = some true ∧ c.facilityNotified = some true ∧
+      c.monthlyLimit = some true ∧ managementI.holds () p⟩
+
+def managementNotification : Logic.Rule ManagementEvidence Unit :=
+  ⟨"notice/D026/paragraph/7",
+    { dailyNotice "(7)" with location := "PDF403頁 D026(7)" },
+    fun c _ => c.day.categories ≠ [] ∧ c.monthlyLimit = some true⟩
+
+/-- 施設が入院患者にⅡ〜Ⅳを算定することは、外来のⅠの除外条件に含めない。 -/
+def managementOutpatient : Logic.Rule ManagementEvidence Nat :=
+  ⟨"notice/D026/paragraph/8",
+    { dailyNotice "(8)" with location := "PDF403頁 D026(8)" },
+    fun c points => managementPrimary.holds c points ∧ managementNotification.holds c ()⟩
+
+theorem eligible_management_points (c : ManagementEvidence) (points : Nat)
+    (h : managementOutpatient.holds c points) : points = 40 :=
+  h.1.2.2.2
+
+theorem daily_determines : Logic.DeterminesOn
+    (fun c : DailyJudgment × List Category => c.1.Known ∧ c.2 = c.1.categories)
+    [multipleCategoriesRule] := by
+  intro c _
+  refine ⟨⟨(c.2.map scheduledPoints).sum, ?_⟩, ?_⟩
+  · simp [Logic.satisfies_cons, Logic.satisfies_nil, multipleCategoriesRule]
+  · intro a b ha hb
+    exact (ha multipleCategoriesRule (by simp)).trans (hb multipleCategoriesRule (by simp)).symm
+
+structure FacilityCheck where
+  complies : Option Bool := none
+  notified : Option Bool := none
+
+/-- 加算の候補を確認した外来1日分。none は追加の算定候補なしと確認した場合に使う。 -/
+structure OutpatientDay where
+  day : DailyJudgment
+  insuranceMedicalInstitution : Bool
+  status : ConsultationGeneralRules.PatientStatus
+  management : Option FacilityCheck
+  marrow : Option MarrowEvidence
+  electrophoresis : Option DiagnosisEvidence
+
+private def OutpatientDay.performed (c : OutpatientDay) (test : Test) : Prop :=
+  test ∈ c.day.tests.map IncludedTest.test
+
+private def OutpatientDay.managementEvidence (c : OutpatientDay) (facility : FacilityCheck) :
+    ManagementEvidence :=
+  ⟨c.day, facility.complies, facility.notified⟩
+
+def OutpatientDay.Eligible (c : OutpatientDay) : Prop :=
+  c.insuranceMedicalInstitution = true ∧ c.status = .outpatient ∧ c.day.Known ∧
+    (∀ f, c.management = some f → managementOutpatient.holds (c.managementEvidence f) managementIPoints) ∧
+    (∀ e, c.marrow = some e → e.site = c.day.site ∧ c.performed e.test ∧
+      marrowNotification.holds e ()) ∧
+    (∀ e, c.electrophoresis = some e → c.performed e.test ∧ electrophoresisNotification.holds e ())
+
+def OutpatientDay.PermitsPoints (c : OutpatientDay) (points : Nat) : Prop :=
+  ∃ base management marrow electrophoresis,
+    multipleCategoriesRule.holds (c.day, c.day.categories) base ∧
+    (match c.management with
+      | none => management = 0
+      | some f => managementOutpatient.holds (c.managementEvidence f) management) ∧
+    (match c.marrow with
+      | none => marrow = 0
+      | some e => marrowAddition.holds e.test marrow ∧ marrowNotification.holds e ()) ∧
+    (match c.electrophoresis with
+      | none => electrophoresis = 0
+      | some e => electrophoresisAddition.holds e.test electrophoresis ∧ electrophoresisNotification.holds e ()) ∧
+    points = base + management + marrow + electrophoresis
+
+def OutpatientDay.points (c : OutpatientDay) : Option Nat :=
+  c.day.points.map fun base => base +
+    (if c.management.isSome then managementIPoints else 0) +
+    (if c.marrow.isSome then marrowPoints else 0) +
+    (if c.electrophoresis.isSome then electrophoresisPoints else 0)
+
+theorem outpatient_day_iff (c : OutpatientDay) (hc : c.Eligible) (points : Nat) :
+    c.PermitsPoints points ↔ c.points = some points := by
+  obtain ⟨_, _, hk, hm, hb, he⟩ := hc
+  have base : c.day.points = some ((c.day.categories.map scheduledPoints).sum) := by
+    simp [DailyJudgment.points, DailyJudgment.Known] at hk ⊢
+    exact hk
+  have m (p : Nat) :
+      (match c.management with
+      | none => p = 0
+      | some f => managementOutpatient.holds (c.managementEvidence f) p) ↔
+      p = (if c.management.isSome then managementIPoints else 0) := by
+    cases h : c.management with
+    | none => simp
+    | some f =>
+      refine ⟨fun valid => valid.1.2.2.2, ?_⟩
+      intro eq
+      simpa [eq] using hm f h
+  have b (p : Nat) :
+      (match c.marrow with
+      | none => p = 0
+      | some e => marrowAddition.holds e.test p ∧ marrowNotification.holds e ()) ↔
+      p = (if c.marrow.isSome then marrowPoints else 0) := by
+    cases h : c.marrow with
+    | none => simp
+    | some e =>
+      have n := (hb e h).2.2
+      exact ⟨fun valid => valid.1.1, fun eq => ⟨⟨eq, n.1.1⟩, n⟩⟩
+  have e (p : Nat) :
+      (match c.electrophoresis with
+      | none => p = 0
+      | some e => electrophoresisAddition.holds e.test p ∧ electrophoresisNotification.holds e ()) ↔
+      p = (if c.electrophoresis.isSome then electrophoresisPoints else 0) := by
+    cases h : c.electrophoresis with
+    | none => simp
+    | some report =>
+      have n := (he report h).2
+      exact ⟨fun valid => valid.1.1, fun eq => ⟨⟨eq, n.1⟩, n⟩⟩
+  unfold OutpatientDay.PermitsPoints OutpatientDay.points
+  simp only [multipleCategoriesRule, m, b, e, base, Option.map_some, Option.some.injEq]
+  constructor
+  · rintro ⟨_, _, _, _, rfl, rfl, rfl, rfl, eq⟩
+    exact eq.symm
+  · intro eq
+    exact ⟨_, _, _, _, rfl, rfl, rfl, rfl, eq.symm⟩
+
+theorem outpatient_day_determines (c : OutpatientDay) (h : c.Eligible) :
+    ∃ points, c.PermitsPoints points ∧ ∀ other, c.PermitsPoints other → other = points := by
+  have hk := h.2.2.1
+  have hp : c.points = some (((c.day.categories.map scheduledPoints).sum) +
+      (if c.management.isSome then managementIPoints else 0) +
+      (if c.marrow.isSome then marrowPoints else 0) +
+      (if c.electrophoresis.isSome then electrophoresisPoints else 0)) := by
+    simp [OutpatientDay.points, DailyJudgment.points, DailyJudgment.Known] at hk ⊢
+    exact hk
+  exact ⟨_, (outpatient_day_iff c h _).mpr hp,
+    fun _ other => Option.some.inj (((outpatient_day_iff c h _).mp other).symm.trans hp)⟩
+
+/-- 確認済みの日の判断料と加算を第1節の実施料集計へ合流させる。 -/
+def OutpatientDay.applyToSpecimen (c : OutpatientDay) (_ : c.Eligible)
+    (specimen : Examinations.SpecimenContext) : Option Examinations.SpecimenContext := do
+  if specimen.inpatient then none else
+    let judgmentPoints ← c.points
+    some { specimen with judgmentPoints }
+
+private def dailyExample : DailyJudgment :=
+  let site : History.Site := ⟨1, 1, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩
+  { site
+    tests := [{ test := { major := 23, ordinaryCategory := .microbiological }
+                b001_15ClaimedThisMonth := false
+                d025ClaimedThisMonth := false }]
+    coveredByD027 := false
+    claims := ⟨⟨site.monthScope, []⟩, by simp⟩
+    performances := ⟨site.monthScope, []⟩ }
+
+example : dailyExample.points = some 150 := by decide
+
+private def outpatientDayExample : OutpatientDay :=
+  ⟨dailyExample, true, .outpatient, some ⟨some true, some true⟩, none, none⟩
+
+example : outpatientDayExample.Eligible := by
+  simp [OutpatientDay.Eligible, outpatientDayExample, dailyExample, DailyJudgment.Known,
+    DailyJudgment.coverageResolved, IncludedTest.separateEligibility, OutpatientDay.managementEvidence,
+    managementOutpatient, managementPrimary, managementNotification, ManagementEvidence.monthlyLimit,
+    managementI]
+  decide
+
+example : outpatientDayExample.points = some 190 := by decide
+example : ({ dailyExample with coveredByD027 := true } : DailyJudgment).points = some 0 := by decide
+example : ({ dailyExample with
+    claims := ⟨⟨{ dailyExample.site.monthScope with patient := 2 }, []⟩, by simp⟩
+  } : DailyJudgment).points = none := by decide
+
 end SpecimenJudgment
 end Sanri.MedicalFee
 

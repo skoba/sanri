@@ -230,4 +230,360 @@ def SepsisPbp2Pair (c : SepsisPanelContext) (p : D023Other.Context) (points : Na
   c.performance.site.institution = p.performance.site.institution ∧
   D023Other.InScope p ∧ Satisfies D023Other.rates p points
 
+/-- 条項が列挙する併施相手を、D012の検査種類とD023の項・カタログ内の
+検査種類に区別する。検査項目番号だけではウイルス抗体価の対象は決まらない。 -/
+inductive SeriesTest where
+  | antibody (item : D012.Item) (target : Option D012.Target := none)
+  | molecular (number variant : Nat)
+  | respiratoryPanel (includesCovid : Bool)
+  deriving DecidableEq
+
+def seriesTestFromD012 (c : D012.Context) (item : D012.Item)
+    (_ : c.performance.item = .local item) : Performance SeriesTest :=
+  { c.performance with item := .antibody item c.target }
+
+private def exactSeriesTest (test : SeriesTest) (actual : SeriesTest) : Option Bool :=
+  match test, actual with
+  | .antibody expected _, .antibody item _ => some (expected == item)
+  | _, _ => some (test == actual)
+
+private def viralTiterTargets (targets : List D012.Target) : SeriesTest → Option Bool
+  | .antibody .viralTiter target => target.map targets.contains
+  | _ => some false
+
+private def respiratoryTiter := viralTiterTargets
+  [.influenzaA, .influenzaB, .parainfluenzaI, .parainfluenzaII, .parainfluenzaIII, .rs]
+
+private def csfTiter := viralTiterTargets [.cytomegalovirus, .herpes, .varicellaZoster]
+
+/-- 確認範囲を当該患者・機関の治療範囲に合わせ、照合済みの候補実施を調べる。
+対象又は一連のIDが不明な相手について別算定可を導かない。 -/
+def SeriesExcludes (anchor : Performance Unit) (related : List (Performance SeriesTest))
+    (matchTest : SeriesTest → Option Bool) : Prop :=
+  ∀ other ∈ related,
+    matchTest other.item = some false ∨
+      anchor.sameSeries { other with item := () } = some false
+
+structure RespiratoryPanelAssessment where
+  panel : RespiratoryPanelContext
+  filingEvidence : PanelFilingEvidence
+  /-- 通知(37)の一連について、対象区分の既算定・同時審査の候補を確認した一覧。 -/
+  separatelyBilled : Option (List (Performance SeriesTest)) := none
+
+private def respiratoryExclusion (withCovid : Bool) (suffix page : String)
+    (matchTest : SeriesTest → Option Bool) : Rule RespiratoryPanelAssessment Unit :=
+  ⟨"notice/D023/paragraph/37/" ++ (if withCovid then "u/" else "e/") ++ suffix,
+    addedNotice "(37) 一連の治療中の別算定" page, fun c _ =>
+    c.panel.performance.item = withCovid →
+      ∃ related, c.separatelyBilled = some related ∧
+        SeriesExcludes { c.panel.performance with item := () } related matchTest⟩
+
+def panelWithCovidI :=
+  respiratoryExclusion true "i" "397" (exactSeriesTest (.antibody .mycoplasmaQual))
+def panelWithCovidRo :=
+  respiratoryExclusion true "ro" "397" (exactSeriesTest (.antibody .mycoplasmaSemi))
+def panelWithCovidHa :=
+  respiratoryExclusion true "ha" "397" (exactSeriesTest (.antibody .pneumoniaeIgG))
+def panelWithCovidNi :=
+  respiratoryExclusion true "ni" "397" (exactSeriesTest (.antibody .pneumoniaeIgA))
+def panelWithCovidHo :=
+  respiratoryExclusion true "ho" "397" respiratoryTiter
+def panelWithCovidHe :=
+  respiratoryExclusion true "he" "397" (exactSeriesTest (.antibody .pertussisQual))
+def panelWithCovidTo :=
+  respiratoryExclusion true "to" "397" (exactSeriesTest (.antibody .pertussisSemi))
+def panelWithCovidChi :=
+  respiratoryExclusion true "chi" "397" (exactSeriesTest (.antibody .influenzaAntigen))
+def panelWithCovidRi :=
+  respiratoryExclusion true "ri" "397" (exactSeriesTest (.antibody .rsAntigen))
+def panelWithCovidNu :=
+  respiratoryExclusion true "nu" "397" (exactSeriesTest (.antibody .metapneumovirusAntigen))
+def panelWithCovidRu :=
+  respiratoryExclusion true "ru" "397–398" (exactSeriesTest (.antibody .mycoplasmaChromatography))
+def panelWithCovidWo :=
+  respiratoryExclusion true "wo" "398" (exactSeriesTest (.antibody .covidQual))
+def panelWithCovidWa :=
+  respiratoryExclusion true "wa" "398" (exactSeriesTest (.antibody .pneumoniaeIgM))
+def panelWithCovidKa :=
+  respiratoryExclusion true "ka" "398" (exactSeriesTest (.antibody .mycoplasmaFluorescence))
+def panelWithCovidYo :=
+  respiratoryExclusion true "yo" "398" (exactSeriesTest (.antibody .nonStoolAdenovirus))
+def panelWithCovidTa :=
+  respiratoryExclusion true "ta" "398" (exactSeriesTest (.antibody .pertussisAntigen))
+def panelWithCovidRe :=
+  respiratoryExclusion true "re" "398" (exactSeriesTest (.antibody .covidFlu))
+def panelWithCovidSo :=
+  respiratoryExclusion true "so" "398" (exactSeriesTest (.antibody .pertussisAntibody))
+def panelWithCovidTsu :=
+  respiratoryExclusion true "tsu" "398" (exactSeriesTest (.antibody .covidRs))
+def panelWithCovidNe :=
+  respiratoryExclusion true "ne" "398" (exactSeriesTest (.antibody .covidFluRs))
+def panelWithCovidNa :=
+  respiratoryExclusion true "na" "398" (exactSeriesTest (.antibody .covidQuant))
+def panelWithCovidRa :=
+  respiratoryExclusion true "ra" "398" (exactSeriesTest (.molecular 6 0))
+def panelWithCovidMu :=
+  respiratoryExclusion true "mu" "398" (exactSeriesTest (.molecular 6 1))
+def panelWithCovidU :=
+  respiratoryExclusion true "u" "398" (exactSeriesTest (.molecular 6 2))
+def panelWithCovidWi :=
+  respiratoryExclusion true "wi" "398" (exactSeriesTest (.molecular 13 0))
+def panelWithCovidNo :=
+  respiratoryExclusion true "no" "398" (exactSeriesTest (.molecular 13 1))
+def panelWithCovidO :=
+  respiratoryExclusion true "o" "398" (exactSeriesTest (.molecular 13 2))
+def panelWithCovidKu :=
+  respiratoryExclusion true "ku" "398" (exactSeriesTest (.molecular 19 0))
+def panelWithCovidYa :=
+  respiratoryExclusion true "ya" "398" (exactSeriesTest (.molecular 20 0))
+def panelWithCovidMa :=
+  respiratoryExclusion true "ma" "398" (exactSeriesTest (.molecular 20 1))
+def panelWithCovidKe :=
+  respiratoryExclusion true "ke" "398" (exactSeriesTest (.molecular 20 2))
+def panelWithCovidFu :=
+  respiratoryExclusion true "fu" "398" (exactSeriesTest (.molecular 24 0))
+def panelWithCovidKo :=
+  respiratoryExclusion true "ko" "398" (exactSeriesTest (.respiratoryPanel false))
+
+def respiratoryWithCovidExclusions := [
+  panelWithCovidI, panelWithCovidRo, panelWithCovidHa, panelWithCovidNi,
+  panelWithCovidHo, panelWithCovidHe, panelWithCovidTo, panelWithCovidChi,
+  panelWithCovidRi, panelWithCovidNu, panelWithCovidRu, panelWithCovidWo,
+  panelWithCovidWa, panelWithCovidKa, panelWithCovidYo, panelWithCovidTa,
+  panelWithCovidRe, panelWithCovidSo, panelWithCovidTsu, panelWithCovidNe,
+  panelWithCovidNa, panelWithCovidRa, panelWithCovidMu, panelWithCovidU,
+  panelWithCovidWi, panelWithCovidNo, panelWithCovidO, panelWithCovidKu,
+  panelWithCovidYa, panelWithCovidMa, panelWithCovidKe, panelWithCovidFu,
+  panelWithCovidKo]
+
+def panelWithoutCovidI :=
+  respiratoryExclusion false "i" "398" (exactSeriesTest (.antibody .mycoplasmaQual))
+def panelWithoutCovidRo :=
+  respiratoryExclusion false "ro" "398" (exactSeriesTest (.antibody .mycoplasmaSemi))
+def panelWithoutCovidHa :=
+  respiratoryExclusion false "ha" "398" (exactSeriesTest (.antibody .pneumoniaeIgG))
+def panelWithoutCovidNi :=
+  respiratoryExclusion false "ni" "399" (exactSeriesTest (.antibody .pneumoniaeIgA))
+def panelWithoutCovidHo :=
+  respiratoryExclusion false "ho" "399" respiratoryTiter
+def panelWithoutCovidHe :=
+  respiratoryExclusion false "he" "399" (exactSeriesTest (.antibody .pertussisQual))
+def panelWithoutCovidTo :=
+  respiratoryExclusion false "to" "399" (exactSeriesTest (.antibody .pertussisSemi))
+def panelWithoutCovidChi :=
+  respiratoryExclusion false "chi" "399" (exactSeriesTest (.antibody .influenzaAntigen))
+def panelWithoutCovidRi :=
+  respiratoryExclusion false "ri" "399" (exactSeriesTest (.antibody .rsAntigen))
+def panelWithoutCovidNu :=
+  respiratoryExclusion false "nu" "399" (exactSeriesTest (.antibody .metapneumovirusAntigen))
+def panelWithoutCovidRu :=
+  respiratoryExclusion false "ru" "399" (exactSeriesTest (.antibody .mycoplasmaChromatography))
+def panelWithoutCovidWo :=
+  respiratoryExclusion false "wo" "399" (exactSeriesTest (.antibody .pneumoniaeIgM))
+def panelWithoutCovidWa :=
+  respiratoryExclusion false "wa" "399" (exactSeriesTest (.antibody .mycoplasmaFluorescence))
+def panelWithoutCovidKa :=
+  respiratoryExclusion false "ka" "399" (exactSeriesTest (.antibody .nonStoolAdenovirus))
+def panelWithoutCovidYo :=
+  respiratoryExclusion false "yo" "399" (exactSeriesTest (.antibody .pertussisAntigen))
+def panelWithoutCovidTa :=
+  respiratoryExclusion false "ta" "399" (exactSeriesTest (.antibody .pertussisAntibody))
+def panelWithoutCovidRe :=
+  respiratoryExclusion false "re" "399" (exactSeriesTest (.molecular 6 0))
+def panelWithoutCovidSo :=
+  respiratoryExclusion false "so" "399" (exactSeriesTest (.molecular 6 1))
+def panelWithoutCovidTsu :=
+  respiratoryExclusion false "tsu" "399" (exactSeriesTest (.molecular 6 2))
+def panelWithoutCovidNe :=
+  respiratoryExclusion false "ne" "399" (exactSeriesTest (.molecular 13 0))
+def panelWithoutCovidNa :=
+  respiratoryExclusion false "na" "399" (exactSeriesTest (.molecular 13 1))
+def panelWithoutCovidRa :=
+  respiratoryExclusion false "ra" "399" (exactSeriesTest (.molecular 13 2))
+def panelWithoutCovidMu :=
+  respiratoryExclusion false "mu" "399" (exactSeriesTest (.molecular 24 0))
+def panelWithoutCovidU :=
+  respiratoryExclusion false "u" "399" (exactSeriesTest (.respiratoryPanel true))
+
+def respiratoryWithoutCovidExclusions := [
+  panelWithoutCovidI, panelWithoutCovidRo, panelWithoutCovidHa, panelWithoutCovidNi,
+  panelWithoutCovidHo, panelWithoutCovidHe, panelWithoutCovidTo, panelWithoutCovidChi,
+  panelWithoutCovidRi, panelWithoutCovidNu, panelWithoutCovidRu, panelWithoutCovidWo,
+  panelWithoutCovidWa, panelWithoutCovidKa, panelWithoutCovidYo, panelWithoutCovidTa,
+  panelWithoutCovidRe, panelWithoutCovidSo, panelWithoutCovidTsu, panelWithoutCovidNe,
+  panelWithoutCovidNa, panelWithoutCovidRa, panelWithoutCovidMu, panelWithoutCovidU]
+
+def respiratoryOutpatientRoute : Rule RespiratoryPanelAssessment Unit :=
+  ⟨"notice/D023/paragraph/37/i", addedNotice "(37)イ 外来" "397",
+    fun c _ => panelOutpatient.holds c.panel ()⟩
+
+def respiratoryWithCovid : Rule RespiratoryPanelAssessment Unit :=
+  ⟨"notice/D023/paragraph/37/u", addedNotice "(37)ウ" "397–398",
+    fun c _ => Satisfies respiratoryWithCovidExclusions c ()⟩
+
+def respiratoryWithoutCovid : Rule RespiratoryPanelAssessment Unit :=
+  ⟨"notice/D023/paragraph/37/e", addedNotice "(37)エ" "398–399",
+    fun c _ => Satisfies respiratoryWithoutCovidExclusions c ()⟩
+
+def respiratoryPanel : Rule RespiratoryPanelAssessment Unit :=
+  ⟨"notice/D023/paragraph/37", addedNotice "(37)" "396–399", fun c _ =>
+    panelMethod.holds c.panel () ∧ respiratoryOutpatientRoute.holds c () ∧
+    respiratoryWithCovid.holds c () ∧ respiratoryWithoutCovid.holds c ()⟩
+
+def RespiratoryPanelEligible (c : RespiratoryPanelAssessment) : Prop :=
+  c.panel.evidence.tier = c.panel.tier ∧
+    c.filingEvidence.site = c.panel.performance.site ∧
+    c.filingEvidence.includesCovid = c.panel.performance.item ∧
+    panelFilingQuestion.holds c.filingEvidence () ∧
+    D023Schedule.respiratoryPanelFacility.holds c.panel.evidence () ∧ respiratoryPanel.holds c ()
+
+theorem respiratory_panel_determines (c : RespiratoryPanelAssessment)
+    (_ : RespiratoryPanelEligible c) : DeterminesAt D023Schedule.rates c.panel.tier :=
+  D023Schedule.base_determines c.panel.tier trivial
+
+structure CsfPanelContext where
+  performance : Performance Unit
+  followedGuideline : Option Bool := none
+  stronglySuspectedMeningitisOrEncephalitis : Option Bool := none
+  forCsfPathogenDetection : Option Bool := none
+  specifiedSimultaneousCsfPanel : Option Bool := none
+  evidence : D023Schedule.Evidence
+  treatmentScope : Scope
+  history : ClaimHistory Nat
+  separatelyBilled : Option (List (Performance SeriesTest)) := none
+
+def CsfPanelContext.prior (c : CsfPanelContext) : Option Nat := do
+  let series ← c.performance.series
+  if c.treatmentScope.institution = some c.performance.site.institution ∧
+      c.treatmentScope.Includes c.performance.site = true then
+    count c.history c.treatmentScope (· == series)
+  else none
+
+def csfPanelIndication : Rule CsfPanelContext Unit :=
+  ⟨"notice/D023/paragraph/39/a", addedNotice "(39)ア" "400", fun c _ =>
+    c.followedGuideline = some true ∧ c.stronglySuspectedMeningitisOrEncephalitis = some true ∧
+    c.forCsfPathogenDetection = some true ∧ c.specifiedSimultaneousCsfPanel = some true ∧
+    c.prior = some 0⟩
+
+def csfPanelDocumentation : Rule CsfPanelContext (Bool × Bool) :=
+  ⟨"notice/D023/paragraph/39/a", addedNotice "(39)ア 摘要" "400", fun _ recorded =>
+    recorded = (true, true)⟩
+
+private def csfExclusion (suffix : String) (matchTest : SeriesTest → Option Bool) :
+    Rule CsfPanelContext Unit :=
+  ⟨"notice/D023/paragraph/39/i/" ++ suffix, addedNotice "(39)イ 一連の治療中の別算定" "400",
+    fun c _ => ∃ related, c.separatelyBilled = some related ∧
+      SeriesExcludes c.performance related matchTest⟩
+
+def csfExclusionI := csfExclusion "i" csfTiter
+def csfExclusionRo := csfExclusion "ro" (exactSeriesTest (.antibody .pneumococcusAntigen))
+def csfExclusionHa := csfExclusion "ha" (exactSeriesTest (.antibody .nontypeableHaemophilus))
+def csfExclusionNi := csfExclusion "ni" (exactSeriesTest (.antibody .cryptococcusQual))
+def csfExclusionHo := csfExclusion "ho" (exactSeriesTest (.antibody .cryptococcusSemi))
+def csfExclusionHe := csfExclusion "he" (fun test => some (test == .antibody .herpesAntigen || test == .antibody .herpesSkin))
+def csfExclusionTo := csfExclusion "to" (fun test => some (test == .antibody .herpesCornea || test == .antibody .herpesGenital))
+def csfExclusionChi := csfExclusion "chi" (exactSeriesTest (.antibody .pneumococcusCapsule))
+def csfExclusionRi := csfExclusion "ri" (exactSeriesTest (.antibody .cmvPp65))
+def csfExclusionNu := csfExclusion "nu" (fun test => some (test == .molecular 17 4 || test == .molecular 17 5))
+def csfExclusionRu := csfExclusion "ru" (exactSeriesTest (.molecular 21 0))
+
+def csfExclusions := [
+  csfExclusionI, csfExclusionRo, csfExclusionHa, csfExclusionNi,
+  csfExclusionHo, csfExclusionHe, csfExclusionTo, csfExclusionChi,
+  csfExclusionRi, csfExclusionNu, csfExclusionRu]
+
+def csfPanelExclusions : Rule CsfPanelContext Unit :=
+  ⟨"notice/D023/paragraph/39/i", addedNotice "(39)イ" "400", fun c _ =>
+    Satisfies csfExclusions c ()⟩
+
+def csfPanel : Rule CsfPanelContext Unit :=
+  ⟨"notice/D023/paragraph/39", addedNotice "(39)" "400", fun c _ =>
+    csfPanelIndication.holds c () ∧ csfPanelExclusions.holds c ()⟩
+
+def CsfPanelEligible (c : CsfPanelContext) : Prop :=
+  c.evidence.tier = .sepsisOrCsfPanel ∧ c.evidence.csfPanel = some true ∧
+    D023Schedule.csfPanelFacility.holds c.evidence () ∧ csfPanel.holds c ()
+
+theorem csf_panel_determines (c : CsfPanelContext) (_ : CsfPanelEligible c) :
+    DeterminesAt D023Schedule.rates .sepsisOrCsfPanel :=
+  D023Schedule.base_determines _ trivial
+
+structure PneumoniaPanelContext where
+  performance : Performance Unit
+  severePneumoniaDiagnosed : Option Bool := none
+  sputumOrBronchoalveolarLavage : Option Bool := none
+  simultaneousQualitativeMicroarray : Option Bool := none
+  detectedSpecifiedKinds : Option Bool := none
+  targetCount : Option Nat := none
+  /-- 通知(36)ア(ロ)に該当する病床と集中治療相当性の確認。 -/
+  treatedInOtherBed : Option Bool := none
+  confirmedEquivalentIntensiveCare : Option Bool := none
+  evidence : D023Schedule.Evidence
+  treatmentScope : Scope
+  history : ClaimHistory Nat
+  separatelyBilled : Option (List (Performance SeriesTest)) := none
+
+def PneumoniaPanelContext.prior (c : PneumoniaPanelContext) : Option Nat := do
+  let series ← c.performance.series
+  if c.treatmentScope.institution = some c.performance.site.institution ∧
+      c.treatmentScope.Includes c.performance.site = true then
+    count c.history c.treatmentScope (· == series)
+  else none
+
+def pneumoniaPanelOtherBed : Rule PneumoniaPanelContext Unit :=
+  ⟨"notice/D023/paragraph/36/a/ro", addedNotice "(36)ア(ロ)" "396", fun c _ =>
+    c.treatedInOtherBed = some true ∧ c.confirmedEquivalentIntensiveCare = some true⟩
+
+def pneumoniaPanelOutpatientRoute : Rule PneumoniaPanelContext Unit :=
+  ⟨"notice/D023/paragraph/36/a", addedNotice "(36)ア 外来の参照範囲" "395–396",
+    pneumoniaPanelOtherBed.holds⟩
+
+def pneumoniaPanelOtherBedDocumentation : Rule PneumoniaPanelContext Bool :=
+  ⟨"notice/D023/paragraph/36/a/ro", addedNotice "(36)ア(ロ) 摘要" "396",
+    fun _ documented => documented = true⟩
+
+private def pneumoniaPanelExclusion (suffix : String) (matchTest : SeriesTest → Option Bool) :
+    Rule PneumoniaPanelContext Unit :=
+  ⟨"notice/D023/paragraph/36/i/" ++ suffix, addedNotice "(36)イ 一連の治療中の別算定" "396",
+    fun c _ => ∃ related, c.separatelyBilled = some related ∧
+      SeriesExcludes c.performance related matchTest⟩
+
+def pneumoniaPanelI := pneumoniaPanelExclusion "i" (exactSeriesTest (.antibody .mycoplasmaQual))
+def pneumoniaPanelRo := pneumoniaPanelExclusion "ro" (exactSeriesTest (.antibody .mycoplasmaSemi))
+def pneumoniaPanelHa := pneumoniaPanelExclusion "ha" respiratoryTiter
+def pneumoniaPanelNi := pneumoniaPanelExclusion "ni" (exactSeriesTest (.antibody .influenzaAntigen))
+def pneumoniaPanelHo := pneumoniaPanelExclusion "ho" (exactSeriesTest (.antibody .rsAntigen))
+def pneumoniaPanelHe := pneumoniaPanelExclusion "he" (exactSeriesTest (.antibody .metapneumovirusAntigen))
+def pneumoniaPanelTo := pneumoniaPanelExclusion "to" (exactSeriesTest (.antibody .mycoplasmaChromatography))
+def pneumoniaPanelChi := pneumoniaPanelExclusion "chi" (exactSeriesTest (.antibody .mycoplasmaFluorescence))
+def pneumoniaPanelRi := pneumoniaPanelExclusion "ri" (exactSeriesTest (.antibody .nonStoolAdenovirus))
+def pneumoniaPanelNu := pneumoniaPanelExclusion "nu" (exactSeriesTest (.antibody .pneumococcusCapsule))
+def pneumoniaPanelRu := pneumoniaPanelExclusion "ru" fun test =>
+  some (test == .molecular 6 0 || test == .molecular 6 1 || test == .molecular 6 2)
+def pneumoniaPanelWo := pneumoniaPanelExclusion "wo" (exactSeriesTest (.molecular 7 0))
+def pneumoniaPanelWa := pneumoniaPanelExclusion "wa" (exactSeriesTest (.molecular 13 1))
+def pneumoniaPanelKa := pneumoniaPanelExclusion "ka" (exactSeriesTest (.molecular 17 1))
+
+def pneumoniaPanelExclusions : Rule PneumoniaPanelContext Unit :=
+  ⟨"notice/D023/paragraph/36/i", addedNotice "(36)イ" "396", fun c _ =>
+    Satisfies [pneumoniaPanelI, pneumoniaPanelRo, pneumoniaPanelHa, pneumoniaPanelNi,
+      pneumoniaPanelHo, pneumoniaPanelHe, pneumoniaPanelTo, pneumoniaPanelChi,
+      pneumoniaPanelRi, pneumoniaPanelNu, pneumoniaPanelRu, pneumoniaPanelWo,
+      pneumoniaPanelWa, pneumoniaPanelKa] c ()⟩
+
+def pneumoniaPanel : Rule PneumoniaPanelContext Unit :=
+  ⟨"notice/D023/paragraph/36", addedNotice "(36) 外来の参照範囲" "395–396", fun c _ =>
+    c.severePneumoniaDiagnosed = some true ∧ c.sputumOrBronchoalveolarLavage = some true ∧
+    c.simultaneousQualitativeMicroarray = some true ∧ c.detectedSpecifiedKinds = some true ∧
+    (∃ n, c.targetCount = some n ∧ 30 ≤ n) ∧ c.prior = some 0 ∧
+    pneumoniaPanelOutpatientRoute.holds c () ∧ pneumoniaPanelExclusions.holds c ()⟩
+
+def pneumoniaPanelDocumentation : Rule PneumoniaPanelContext Date :=
+  ⟨"notice/D023/paragraph/36", addedNotice "(36) 摘要" "395–396", fun c recorded =>
+    recorded = c.performance.site.date⟩
+
+def PneumoniaPanelEligible (c : PneumoniaPanelContext) : Prop :=
+  c.evidence.tier = .pneumoniaResistancePanel ∧
+    D023Schedule.pneumoniaPanelFacility.holds c.evidence () ∧ pneumoniaPanel.holds c ()
+
 end Sanri.MedicalFee.D023

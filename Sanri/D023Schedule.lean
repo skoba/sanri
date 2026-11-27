@@ -123,8 +123,8 @@ private def primary (page location : String) : SourceRef :=
 def rate (i : Tier) : Rule Tier Nat :=
   let page := if i.number ≤ 10 then "189" else if i.number ≤ 26 then "190" else "191"
   let suffix := match i with
-    | .respiratoryPanelCovid => "/a"
-    | .respiratoryPanelWithoutCovid => "/i"
+    | .respiratoryPanelCovid => "イ"
+    | .respiratoryPanelWithoutCovid => "ロ"
     | _ => ""
   ⟨"primary/D023/item/" ++ toString i.number,
     primary page (toString i.number ++ suffix), fun c p => c = i → p = i.base⟩

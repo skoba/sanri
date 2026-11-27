@@ -76,11 +76,12 @@ class NoticeInventoryTests(unittest.TestCase):
     def test_nested_iroha_kana(self):
         pages = [" イ  合成枝\n    (へ)  合成小枝\n    (リ)  合成小枝\n"
                  "    (ル)  合成小枝\n    (ヲ)  合成小枝\n    (ワ)  合成小枝\n"
-                 "    (ヨ)  合成小枝\n    (レ)  合成小枝\n    (二)  合成小枝"]
-        child = {"start": {"page": 1, "line": 1}, "end": {"page": 1, "line": 9}}
+                 "    (ヨ)  合成小枝\n    (レ)  合成小枝\n    (二)  合成小枝\n"
+                 "    (ラ)  合成小枝\n    (ヤ)  合成小枝\n    (ヰ)  合成小枝"]
+        child = {"start": {"page": 1, "line": 1}, "end": {"page": 1, "line": 12}}
         base = "notice/D997/paragraph/1/i"
         self.assertEqual(nested_notice_paths(child, base, pages),
-                         [f"{base}/{suffix}" for suffix in ("he", "ri", "ru", "wo", "wa", "yo", "re", "ni")])
+                         [f"{base}/{suffix}" for suffix in ("he", "ri", "ru", "wo", "wa", "yo", "re", "ni", "ra", "ya", "wi")])
 
     def test_nested_additions_require_both_baseline_and_every_amendment(self):
         url = "https://example.test/addition.pdf"

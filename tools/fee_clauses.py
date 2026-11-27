@@ -69,9 +69,9 @@ def index_clauses(lines: list[tuple[int, int, str]]) -> dict:
             elif not in_note and (item_indent is None or indent <= item_indent):
                 issues.append({**position, "kind": "unresolved_number", "number": number})
         elif in_note and (match := re.match(r"([ァ-ヶ])\s+\S", label)):
-            if match[1] in KANA_IDS and notes[-1]["number"] is None:
+            if match[1] in KANA_IDS:
                 notes[-1].setdefault("children", []).append({
-                    **position, "number": match[1], "path": f"note/{KANA_IDS[match[1]]}",
+                    **position, "number": match[1],
                 })
 
     unnumbered = 0
@@ -84,6 +84,10 @@ def index_clauses(lines: list[tuple[int, int, str]]) -> dict:
         else:
             unnumbered += 1
             note["path"] = f"note/unnumbered/{unnumbered}"
+        # 従来の無番号注の枝IDを維持する。番号付きの注は親番号も識別子に含める。
+        child_prefix = "note" if note["number"] is None else note["path"]
+        for child in note.get("children", []):
+            child["path"] = f"{child_prefix}/{KANA_IDS[child['number']]}"
     for item in {note["item"] for note in notes}:
         numbered = [note["number"] for note in notes if note["item"] == item and note["number"] is not None]
         if numbered != list(range(1, len(numbered) + 1)):

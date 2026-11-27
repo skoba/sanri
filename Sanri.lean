@@ -57,6 +57,8 @@ import Sanri.D023Schedule
 import Sanri.D023
 import Sanri.D023Additional
 import Sanri.D023Early
+import Sanri.D023Outpatient
+import Sanri.SpecimenJudgmentRouting
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring

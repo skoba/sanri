@@ -66,6 +66,15 @@ class InventoryTests(unittest.TestCase):
         self.assertIsNone(second["item_note_paths"])
         self.assertEqual(second["clause_issues"][0]["kind"], "item_sequence")
 
+    def test_numbered_note_child_keeps_parent_number(self):
+        pages = ["\n".join([FIRST, FIRST, "Q900 合成区分", "   １   架空項",
+                            "注１   架空注", "  ２   別の架空注",
+                            "      イ   条件甲", "      ロ   条件乙"])]
+        row, = build_inventory(pages)["rows"]
+        self.assertEqual(row["item_note_paths"], ["item/1", "note/1", "note/2"])
+        self.assertEqual([child["path"] for child in row["notes"][1]["children"]],
+                         ["note/2/i", "note/2/ro"])
+
     def test_local_report_can_be_regenerated(self):
         with TemporaryDirectory() as local:
             report = build_inventory(["\n".join([FIRST, FIRST, "Q900 合成"])])

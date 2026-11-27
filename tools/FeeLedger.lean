@@ -280,6 +280,13 @@ private unsafe def points : MetaM (List Json) := do
     let number ← evalNat ``D003.itemNumber item
     let price ← evalNat ``UrineFecalTests.fecalPoints item
     return pointRow "D003" ctor.getString! "base" number 0 (some price)
+  let judgment := SpecimenJudgment.allCategories.map fun category =>
+    pointRow "D026" (reprStr category) "base" category.number 0
+      (some (SpecimenJudgment.scheduledPoints category))
+  let judgmentNotes := [
+    pointRow "D026" "managementI" "note" 8 0 (some SpecimenJudgment.managementIPoints),
+    pointRow "D026" "marrow" "note" 10 0 (some SpecimenJudgment.marrowPoints),
+    pointRow "D026" "electrophoresis" "note" 11 0 (some SpecimenJudgment.electrophoresisPoints)]
   return [generalUrine] ++ specialUrine ++ sediment ++ fecal ++ blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
@@ -288,7 +295,7 @@ private unsafe def points : MetaM (List Json) := do
     endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap, infectionClassCap] ++
     hepatitis ++ hepatitisNotes ++ autoantibodies ++ autoantibodyNotes ++ plasmaProteins ++ [igeCap] ++
     cellular ++ bacterialMicroscopy ++ [smear] ++ culture ++ cultureNotes ++ susceptibility ++
-    isolation ++ microbiologyHeadings ++ otherMicrobiology ++ nuclearMicrobiology ++ microbiologyNotes ++ microbiologyReferences ++ specimens
+    isolation ++ microbiologyHeadings ++ otherMicrobiology ++ nuclearMicrobiology ++ microbiologyNotes ++ microbiologyReferences ++ judgment ++ judgmentNotes ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

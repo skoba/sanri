@@ -3,6 +3,7 @@
 from collections import Counter, defaultdict
 import re
 
+from .fee_clauses import KANA_IDS
 from .fee_coverage import clause_paths
 from .fee_inventory import normalized, write_local
 from .notice_inventory import KANA
@@ -13,8 +14,7 @@ from .notice_revisions import (amendment_counts, apply_amendments, effective_par
 from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, PRIMARY_SOURCE, R08_AS_OF, require_source
 
 
-_NESTED_KANA = {**KANA, "ロ": "ro", "リ": "ri", "ル": "ru", "ヲ": "wo", "ワ": "wa",
-                "ヨ": "yo", "レ": "re", "へ": "he", "二": "ni"}
+_NESTED_KANA = {**KANA_IDS, **KANA, "へ": "he", "二": "ni"}
 _NESTED_MARKER = re.compile(r"[（(]([ァ-ヶへ二])[）)]\s+")
 
 
