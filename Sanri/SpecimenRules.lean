@@ -339,17 +339,19 @@ def executionItem (groups : List PricedGroup) (kind : Nat) : Examinations.Specim
 def d023BkSource : Logic.SourceRef := {
   kind := .notification
   identifier := "保医発0529第2号 別添1"
-  edition := "2026-05-29発出、2026-06-01適用"
+  edition := "2026-06-01適用"
   location := "PDF 3頁 指示4 D023(42)"
   verification := .checkedAgainstSource
+  url := some "https://kouseikyoku.mhlw.go.jp/kantoshinetsu/080608_009.pdf"
 }
 
 def d023MycobacteriaSource : Logic.SourceRef := {
   kind := .notification
   identifier := "保医発0930第2号 別添1"
-  edition := "2026-09-30発出、2026-10-01適用"
+  edition := "2026-10-01適用"
   location := "PDF 2頁 指示2 D023(43)"
   verification := .checkedAgainstSource
+  url := some "https://kouseikyoku.mhlw.go.jp/kantoshinetsu/081002_001.pdf"
 }
 
 inductive BkIndication where

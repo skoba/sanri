@@ -13,6 +13,11 @@ from .notice_revisions import (amendment_counts, apply_amendments, effective_par
 from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, PRIMARY_SOURCE, R08_AS_OF, require_source
 
 
+_NESTED_KANA = {**KANA, "ロ": "ro", "リ": "ri", "ル": "ru", "ヲ": "wo", "ワ": "wa",
+                "ヨ": "yo", "レ": "re", "へ": "he", "二": "ni"}
+_NESTED_MARKER = re.compile(r"[（(]([ァ-ヶへ二])[）)]\s+")
+
+
 def matches_replacement(paragraph: dict, rules: list[dict]) -> bool:
     """枝差分を除き、確認済みの段落差替え・新設と同じ改正文書を指すかを調べる。"""
     if "replacement" not in paragraph or not paragraph.get("effective_records"):
@@ -40,6 +45,7 @@ def amendment_branch_matches(paragraph: dict, identifier: str, rules_by_path: di
             continue
         nested = re.fullmatch(r"\(\d+\)([ァ-ヶ])(\d+)", change.get("anchor") or "")
         change_positions = {(row["page"], row["line"]) for row in change.get("records", [])}
+        parent = None
         for row in paragraph.get("effective_records") or []:
             if row["source"] != change["document"]:
                 continue
@@ -49,8 +55,12 @@ def amendment_branch_matches(paragraph: dict, identifier: str, rules_by_path: di
             raw = normalized(row["text"].lstrip())
             marker = re.match(r"([ァ-ヶ])\s+", raw)
             ordinal = re.match(r"([1-9][0-9]*)\s+", raw)
+            kana = _NESTED_MARKER.match(raw)
             if marker and marker[1] in KANA:
-                path = f"{identifier}/{KANA[marker[1]]}"
+                parent = f"{identifier}/{KANA[marker[1]]}"
+                path = parent
+            elif "replacement" in paragraph and parent and kana and kana[1] in _NESTED_KANA:
+                path = f"{parent}/{_NESTED_KANA[kana[1]]}"
             elif nested and ordinal and nested[1] in KANA:
                 path = f"{identifier}/{KANA[nested[1]]}/{ordinal[1]}"
             else:
@@ -64,8 +74,6 @@ def amendment_branch_matches(paragraph: dict, identifier: str, rules_by_path: di
 
 def nested_notice_paths(child: dict, identifier: str, pages: list[str]) -> list[str]:
     """登録版のカナ枝内にある括弧付きカナと丸数字を位置範囲内で照合する。"""
-    nested_kana = {**KANA, "ロ": "ro", "リ": "ri", "ル": "ru", "ヲ": "wo", "ワ": "wa",
-                   "ヨ": "yo", "レ": "re", "へ": "he", "二": "ni"}
     paths = []
     parent = identifier
     start, end = child["start"], child["end"]
@@ -74,10 +82,10 @@ def nested_notice_paths(child: dict, identifier: str, pages: list[str]) -> list[
             if (page, line) <= (start["page"], start["line"]) or (page, line) > (end["page"], end["line"]):
                 continue
             label = raw.lstrip()
-            kana = re.match(r"[（(]([ァ-ヶへ二])[）)]\s+", label)
+            kana = _NESTED_MARKER.match(label)
             ordinal = re.match(r"([①-⑳])\s+", label)
-            if kana and kana[1] in nested_kana:
-                parent = f"{identifier}/{nested_kana[kana[1]]}"
+            if kana and kana[1] in _NESTED_KANA:
+                parent = f"{identifier}/{_NESTED_KANA[kana[1]]}"
                 paths.append(parent)
             elif ordinal:
                 paths.append(f"{parent}/{ord(ordinal[1]) - ord('①') + 1}")

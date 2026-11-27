@@ -130,7 +130,9 @@ private unsafe def points : MetaM (List Json) := do
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
   let specimens := (SpecimenTests.catalog.filter fun e => e.code != .d009 && e.code != .d010 && e.code != .d011 &&
       e.code != .d012 && e.code != .d013 && e.code != .d014 && e.code != .d015 &&
-      e.code != .d016 && e.code != .d017).flatMap fun entry =>
+      e.code != .d016 && e.code != .d017 && e.code != .d018 && e.code != .d019 &&
+      e.code != .d019_2 && e.code != .d020 && e.code != .d021 && e.code != .d022 &&
+      e.code != .d023 && e.code != .d023_2).flatMap fun entry =>
     let code := (reprStr entry.code |>.splitOn "." |>.getLast! |>.toUpper).replace "_" "-"
     entry.variants.map fun item => pointRow code item "base" entry.number entry.branch entry.points
   let markers := (List.finRange 36).map fun slot =>
@@ -165,6 +167,29 @@ private unsafe def points : MetaM (List Json) := do
   let bacterialMicroscopy := D017.ledgerItems.map fun i =>
     pointRow "D017" (reprStr i) "base" i.number 0 (some i.points)
   let smear := pointRow "D017" "concentrationSmear" "note" 1 0 (some D017.smearPoints)
+  let culture := D018.ledgerItems.map fun i =>
+    pointRow "D018" (reprStr i) "base" i.number 0 (some i.points)
+  let cultureNotes := [
+    pointRow "D018" "anaerobic" "note" 7 0 (some D018.anaerobicPoints),
+    pointRow "D018" "fungal" "note" 8 0 (some D018.fungalPoints)]
+  let susceptibility := D019.ledgerItems.map fun i =>
+    pointRow "D019" (reprStr i) "base" i.number 0 (some i.points)
+  let isolation := D020.ledgerItems.map fun i =>
+    pointRow "D020" (reprStr i) "base" i.number 0 (some i.points)
+  let otherMicrobiology := D023Other.ledgerItems.map fun i =>
+    pointRow "D023-2" (reprStr i) "base" i.number 0 (some i.points)
+  let microbiologyHeadings := [
+    pointRow "D019-2" "yeastSusceptibility" "base" 0 0 (some D019Yeast.points),
+    pointRow "D021" "mycobacteriaIdentification" "base" 0 0 (some D021.points),
+    pointRow "D022" "mycobacteriaSusceptibility" "base" 0 0 (some D022.points)]
+  let nuclearMicrobiology := D023Schedule.ledgerTiers.map fun i =>
+    pointRow "D023" (reprStr i) "base" i.number i.branch (some i.base)
+  let microbiologyNotes := [
+    pointRow "D023" "hivConcentration" "note" 18 0 (some D023Schedule.concentrationPoints),
+    pointRow "D023" "rapidNucleicAcid" "note" 29 0 (some D023.rapidPoints)]
+  let microbiologyReferences := [
+    pointRow "D023" "bk" "reference" 0 0 (some D023References.bkPoints),
+    pointRow "D023" "mycobacteria" "reference" 0 0 (some D023References.mycobacteriaPoints)]
   let puncture := D004.ledgerItems.map fun item =>
     let price := item.fixedPoints
     pointRow "D004" (reprStr item |>.splitOn "." |>.getLast!)
@@ -262,7 +287,8 @@ private unsafe def points : MetaM (List Json) := do
     brca ++ profiling ++ targeted ++ plasmaPanel ++ plasmaBundles ++ lateGenetic ++
     endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap, infectionClassCap] ++
     hepatitis ++ hepatitisNotes ++ autoantibodies ++ autoantibodyNotes ++ plasmaProteins ++ [igeCap] ++
-    cellular ++ bacterialMicroscopy ++ [smear] ++ specimens
+    cellular ++ bacterialMicroscopy ++ [smear] ++ culture ++ cultureNotes ++ susceptibility ++
+    isolation ++ microbiologyHeadings ++ otherMicrobiology ++ nuclearMicrobiology ++ microbiologyNotes ++ microbiologyReferences ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

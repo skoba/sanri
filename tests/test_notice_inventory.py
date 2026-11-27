@@ -45,6 +45,24 @@ class NoticeInventoryTests(unittest.TestCase):
             paragraph, parent, {path: [{**rule, "edition": "2026-11-01適用"}]}
         ), set())
 
+    def test_replacement_matches_only_the_correct_nested_parent_and_edition(self):
+        url = "https://example.test/replacement.pdf"
+        change = {"document": "replacement.pdf", "effective_from": "2026-07-01",
+                  "source": {"url": url}}
+        paragraph = {"replacement": "合成段落", "amendments": [change],
+                     "effective_records": [
+                         {"page": 1, "line": n, "text": line, "source": "replacement.pdf"}
+                         for n, line in enumerate(
+                             ["ア  合成枝", "（イ）  内側の枝", "(ロ)  内側の枝", "イ  次の枝",
+                              "(イ)  別の内側の枝"], 1)
+                     ]}
+        rule = {"url": url, "edition": "2026-07-01適用", "verification": "checkedAgainstSource"}
+        base = "notice/D997/paragraph/1"
+        child = f"{base}/a/i"
+        parents = {f"{base}/a/ro": [{**rule, "edition": "2026-08-01適用"}],
+                   f"{base}/i/ro": [rule], child: [rule]}
+        self.assertEqual(amendment_branch_matches(paragraph, base, parents), {child})
+
     def test_nested_kana_restarts_the_ordinal_scope(self):
         pages = [
             " ア  合成枝\n    (イ)  合成小枝\n      ①  合成項目\n",
