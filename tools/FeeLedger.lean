@@ -189,11 +189,23 @@ private unsafe def points : MetaM (List Json) := do
   let targeted := D006Targeted.ledgerItems.map fun i =>
     pointRow ("D006-" ++ toString i.suffix) (reprStr i |>.splitOn "." |>.getLast!) "base"
       0 0 (some i.points)
+  let plasmaPanel := D006PlasmaPanel.ledgerItems.map fun i =>
+    pointRow "D006-27" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
+  let plasmaBundles := [4000, 6000, 8000, 12000].map fun p =>
+    pointRow "D006-27" ("bundle" ++ toString p) "note" 0 0 (some p)
+  let lateGenetic := D006Late.ledgerItems.map fun i =>
+    pointRow ("D006-" ++ toString i.suffix) (reprStr i |>.splitOn "." |>.getLast!)
+      "base" 0 0 (some i.points)
+  let endocrine := D008.ledgerItems.map fun i =>
+    pointRow "D008" (reprStr i |>.splitOn "." |>.getLast!) "base" i.number 0 (some i.points)
+  let endocrineBundle := [410, 623, 900].map fun p =>
+    pointRow "D008" ("bundle" ++ toString p) "note" 0 0 (some p)
   return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
-    brca ++ profiling ++ targeted ++ specimens
+    brca ++ profiling ++ targeted ++ plasmaPanel ++ plasmaBundles ++ lateGenetic ++
+    endocrine ++ endocrineBundle ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

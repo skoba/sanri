@@ -119,14 +119,6 @@ def Technology (c : Context) : Prop :=
 
 def Facility (c : Context) : Prop := c.facilityComplies = some true ∧ c.facilityNotified = some true
 
-def SolidSubmission (c : Context) : Prop :=
-  c.atSubmission = some true ∧ Technology c ∧
-  ((c.specimen = some .solidCells ∧ priorCount c IsSolidPrior = some 0) ∨
-   (c.specimen = some .blood ∧
-    ((c.medicalDifficultyWithTissue = some true ∧ priorCount c IsSolidPrior = some 0) ∨
-     (c.earlierTissueFailed = some true ∧ priorCount c IsSolidPrior = some 1 ∧
-      priorCount c (· == .solidCells) = some 1))))
-
 def SolidPatient (c : Context) : Prop :=
   (c.noStandardTreatment = some true ∨
     (c.locallyAdvancedOrMetastatic = some true ∧ c.standardTreatmentEndedOrExpected = some true)) ∧
@@ -139,16 +131,6 @@ def CcatDisposition (c : Context) : Prop :=
   (c.ccAtSubmissionConsent = some true ∧ c.ccAtSecondaryUseConsent = some true ∧
     c.ccAtDataSent = some true) ∨
   c.ccAtSubmissionConsent = some false ∨ c.ccAtSecondaryUseConsent = some false
-
-/-- カ①〜⑫の適用範囲。上位のがん分類に属するかは入力前に照合する。 -/
-def ListedEarlierTest (t : EarlierTest) : Prop :=
-  (t.cancer = .lung ∧ t.marker ∈ [.egfr, .ros1Fusion, .alkFusion, .ras, .her2, .metEx14]) ∨
-  (t.cancer = .colorectal ∧ t.marker ∈ [.ras, .her2, .braf]) ∨
-  (t.cancer = .breast ∧ t.marker ∈ [.her2, .akt1, .pik3ca, .pten, .esr1]) ∨
-  t.marker ∈ [.msi, .ntrkFusion, .tmb, .retFusion, .her2] ∨
-  (t.cancer = .melanoma ∧ t.marker = .braf) ∨
-  (t.cancer = .biliary ∧ t.marker = .fgfr2Fusion) ∨
-  (t.cancer ∈ [.ovarian, .prostate] ∧ t.marker = .brca1And2)
 
 def AddedAlkTest (t : EarlierTest) : Prop :=
   (t.cancer ∈ [.colorectal, .breast, .melanoma, .biliary, .ovarian, .prostate, .nonLungSolid] ∧
@@ -163,22 +145,6 @@ def Deduction (c : Context) (t : EarlierTest) : Prop :=
 def Difficult (c : Context) : Prop :=
   c.conventionalSearchUnavailable = some true ∨ c.differentialDiagnosisDifficult = some true
 
-def HematologicPatient (c : Context) : Prop :=
-  (c.indication = some .initial ∧ ∃ d ∈ [Disease.aml, .all, .mds, .myeloproliferative,
-    .histiocyticDendritic], c.disease = some d) ∨
-  (c.indication = some .initialDifficult ∧ Difficult c ∧
-    ∃ d ∈ [Disease.aggressiveB, .indolentB, .tCell, .nkCell, .myeloma], c.disease = some d) ∨
-  (c.indication = some .relapsedOrRefractory ∧ c.disease = some .aml) ∨
-  (c.indication = some .relapsedOrRefractoryDifficult ∧ Difficult c ∧
-    ∃ d ∈ [Disease.phPositiveAll, .indolentB, .tCell, .nkCell, .cll], c.disease = some d) ∨
-  (c.indication = some .undiagnosed ∧ c.disease = some .unexplainedCytopenia ∧
-    c.noDefinitiveDiagnosis = some true ∧ c.treatmentDecisionDifficult = some true)
-
-def HematologicSubmission (c : Context) : Prop :=
-  c.atSubmission = some true ∧ Technology c ∧
-  (∃ s ∈ [Specimen.hematologicCells, .blood, .marrow, .cavityFluid], c.specimen = some s) ∧
-  (∃ id, c.diseaseId = some id ∧ priorCount c (· == .hematologic id) = some 0) ∧ HematologicPatient c
-
 private def primary (loc : String) : SourceRef :=
   ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "令和8年度",
     "PDF178頁 D006-19 " ++ loc, .checkedAgainstSource,
@@ -187,6 +153,187 @@ private def primary (loc : String) : SourceRef :=
 private def notice (loc : String) : SourceRef :=
   ⟨.notification, "保医発0305第6号・別添1", "2026-10-07訂正後",
     loc, .checkedAgainstSource, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
+
+/-- カの各枝は先行検査の該当範囲を記述する。どれか一つで足りる。
+この型のがん分類はすべて固形癌の範囲内。 -/
+def earlierRule1 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/1", notice "PDF348頁 D006-19(1)カ①",
+    fun t _ => t.cancer = .lung ∧ t.marker ∈ [.egfr, .ros1Fusion, .alkFusion, .ras, .her2]⟩
+
+def earlierRule2 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/2", notice "PDF348頁 D006-19(1)カ②",
+    fun t _ => t.cancer = .colorectal ∧ t.marker ∈ [.ras, .her2, .braf]⟩
+
+def earlierRule3 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/3", notice "PDF348頁 D006-19(1)カ③",
+    fun t _ => t.cancer = .breast ∧ t.marker = .her2⟩
+
+def earlierRule4 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/4", notice "PDF348頁 D006-19(1)カ④",
+    fun t _ => t.marker = .msi⟩
+
+def earlierRule5 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/5", notice "PDF348頁 D006-19(1)カ⑤",
+    fun t _ => t.cancer = .lung ∧ t.marker = .metEx14⟩
+
+def earlierRule6 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/6", notice "PDF348頁 D006-19(1)カ⑥",
+    fun t _ => t.cancer = .melanoma ∧ t.marker = .braf⟩
+
+def earlierRule7 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/7", notice "PDF348頁 D006-19(1)カ⑦",
+    fun t _ => t.marker ∈ [.ntrkFusion, .tmb, .retFusion]⟩
+
+def earlierRule8 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/8", notice "PDF348頁 D006-19(1)カ⑧",
+    fun t _ => t.cancer = .biliary ∧ t.marker = .fgfr2Fusion⟩
+
+def earlierRule9 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/9", notice "PDF348頁 D006-19(1)カ⑨",
+    fun t _ => t.cancer ∈ [.ovarian, .prostate] ∧ t.marker = .brca1And2⟩
+
+def earlierRule10 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/10", notice "PDF348頁 D006-19(1)カ⑩",
+    fun t _ => t.cancer = .breast ∧ t.marker ∈ [.akt1, .pik3ca, .pten]⟩
+
+def earlierRule11 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/11", notice "PDF348頁 D006-19(1)カ⑪",
+    fun t _ => t.marker = .her2⟩
+
+def earlierRule12 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/12", notice "PDF348頁 D006-19(1)カ⑫",
+    fun t _ => t.cancer = .breast ∧ t.marker = .esr1⟩
+
+def earlierTestRules : List (Rule EarlierTest Unit) :=
+  [earlierRule1, earlierRule2, earlierRule3, earlierRule4, earlierRule5, earlierRule6,
+    earlierRule7, earlierRule8, earlierRule9, earlierRule10, earlierRule11, earlierRule12]
+
+def ListedEarlierTest (t : EarlierTest) : Prop :=
+  ∃ rule ∈ earlierTestRules, rule.holds t ()
+
+def earlierRule13 : Rule EarlierTest Unit :=
+  ⟨"notice/D006-19/paragraph/1/ka/13",
+    ⟨.notification, "保医発0430第4号・05-18差替版", "2026-06-01適用",
+      "PDF10頁 D006-19(1)カ⑬", .checkedAgainstSource,
+      some "https://kouseikyoku.mhlw.go.jp/kantoshinetsu/080525_016.pdf"⟩,
+    fun t _ => AddedAlkTest t⟩
+
+def ListedDeduction (t : EarlierTest) : Prop :=
+  ListedEarlierTest t ∨ earlierRule13.holds t ()
+
+def tissueDifficultyRule : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/1/a/i", notice "PDF347頁 D006-19(1)ア(イ)",
+    fun c _ => c.medicalDifficultyWithTissue = some true ∧ priorCount c IsSolidPrior = some 0⟩
+
+def tissueFailureRule : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/1/a/ro", notice "PDF347頁 D006-19(1)ア(ロ)",
+    fun c _ => c.earlierTissueFailed = some true ∧ priorCount c IsSolidPrior = some 1 ∧
+      priorCount c (· == .solidCells) = some 1⟩
+
+def hematologic_i_1 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/i/1", notice "PDF348頁 D006-19(2)ア(イ)①",
+    fun c _ => c.disease = some .aml⟩
+
+def hematologic_i_2 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/i/2", notice "PDF348頁 D006-19(2)ア(イ)②",
+    fun c _ => c.disease = some .all⟩
+
+def hematologic_i_3 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/i/3", notice "PDF348頁 D006-19(2)ア(イ)③",
+    fun c _ => c.disease = some .mds⟩
+
+def hematologic_i_4 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/i/4", notice "PDF349頁 D006-19(2)ア(イ)④",
+    fun c _ => c.disease = some .myeloproliferative⟩
+
+def hematologic_i_5 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/i/5", notice "PDF349頁 D006-19(2)ア(イ)⑤",
+    fun c _ => c.disease = some .histiocyticDendritic⟩
+
+def hematologic_i_diseases : List (Rule Context Unit) :=
+  [hematologic_i_1, hematologic_i_2, hematologic_i_3, hematologic_i_4, hematologic_i_5]
+
+def hematologic_i : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/i", notice "PDF348–349頁 D006-19(2)ア(イ)",
+    fun c _ => c.indication = some .initial ∧ ∃ rule ∈ hematologic_i_diseases, rule.holds c ()⟩
+
+def hematologic_ro_1 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ro/1", notice "PDF349頁 D006-19(2)ア(ロ)①",
+    fun c _ => c.disease = some .aggressiveB⟩
+
+def hematologic_ro_2 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ro/2", notice "PDF349頁 D006-19(2)ア(ロ)②",
+    fun c _ => c.disease = some .indolentB⟩
+
+def hematologic_ro_3 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ro/3", notice "PDF349頁 D006-19(2)ア(ロ)③",
+    fun c _ => c.disease = some .tCell⟩
+
+def hematologic_ro_4 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ro/4", notice "PDF349頁 D006-19(2)ア(ロ)④",
+    fun c _ => c.disease = some .nkCell⟩
+
+def hematologic_ro_5 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ro/5", notice "PDF349頁 D006-19(2)ア(ロ)⑤",
+    fun c _ => c.disease = some .myeloma⟩
+
+def hematologic_ro_diseases : List (Rule Context Unit) :=
+  [hematologic_ro_1, hematologic_ro_2, hematologic_ro_3, hematologic_ro_4, hematologic_ro_5]
+
+def hematologic_ro : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ro", notice "PDF349頁 D006-19(2)ア(ロ)",
+    fun c _ => c.indication = some .initialDifficult ∧ Difficult c ∧ ∃ rule ∈ hematologic_ro_diseases, rule.holds c ()⟩
+
+def hematologic_ha : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ha", notice "PDF349頁 D006-19(2)ア(ハ)",
+    fun c _ => c.indication = some .relapsedOrRefractory ∧ c.disease = some .aml⟩
+
+def hematologic_ni_1 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ni/1", notice "PDF349頁 D006-19(2)ア(ニ)①",
+    fun c _ => c.disease = some .phPositiveAll⟩
+
+def hematologic_ni_2 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ni/2", notice "PDF349頁 D006-19(2)ア(ニ)②",
+    fun c _ => c.disease = some .indolentB⟩
+
+def hematologic_ni_3 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ni/3", notice "PDF349頁 D006-19(2)ア(ニ)③",
+    fun c _ => c.disease = some .tCell⟩
+
+def hematologic_ni_4 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ni/4", notice "PDF349頁 D006-19(2)ア(ニ)④",
+    fun c _ => c.disease = some .nkCell⟩
+
+def hematologic_ni_5 : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ni/5", notice "PDF349頁 D006-19(2)ア(ニ)⑤",
+    fun c _ => c.disease = some .cll⟩
+
+def hematologic_ni_diseases : List (Rule Context Unit) :=
+  [hematologic_ni_1, hematologic_ni_2, hematologic_ni_3, hematologic_ni_4, hematologic_ni_5]
+
+def hematologic_ni : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ni", notice "PDF349頁 D006-19(2)ア(ニ)",
+    fun c _ => c.indication = some .relapsedOrRefractoryDifficult ∧ Difficult c ∧ ∃ rule ∈ hematologic_ni_diseases, rule.holds c ()⟩
+
+def hematologic_ho : Rule Context Unit :=
+  ⟨"notice/D006-19/paragraph/2/a/ho", notice "PDF349頁 D006-19(2)ア(ホ)",
+    fun c _ => c.indication = some .undiagnosed ∧ c.noDefinitiveDiagnosis = some true ∧
+      c.treatmentDecisionDifficult = some true ∧ c.disease = some .unexplainedCytopenia⟩
+
+def HematologicPatient (c : Context) : Prop :=
+  hematologic_i.holds c () ∨ hematologic_ro.holds c () ∨ hematologic_ha.holds c () ∨
+    hematologic_ni.holds c () ∨ hematologic_ho.holds c ()
+
+def SolidSubmission (c : Context) : Prop :=
+  c.atSubmission = some true ∧ Technology c ∧
+  ((c.specimen = some .solidCells ∧ priorCount c IsSolidPrior = some 0) ∨
+   (c.specimen = some .blood ∧
+    (tissueDifficultyRule.holds c () ∨ tissueFailureRule.holds c ())))
+
+def HematologicSubmission (c : Context) : Prop :=
+  c.atSubmission = some true ∧ Technology c ∧
+  (∃ s ∈ [Specimen.hematologicCells, .blood, .marrow, .cavityFluid], c.specimen = some s) ∧
+  (∃ id, c.diseaseId = some id ∧ priorCount c (· == .hematologic id) = some 0) ∧ HematologicPatient c
 
 def solidRate : Rule Context Nat :=
   ⟨"primary/D006-19/item/1", primary "1",
@@ -233,12 +380,13 @@ def solidDeductionRule : Rule Context Nat :=
   ⟨"notice/D006-19/paragraph/1/ka", notice "PDF348頁 D006-19(1)カ",
     fun c _ => ∀ t, c.path = some (.deduction t) → c.item = .solid ∧ Deduction c t⟩
 
-def alkAmendmentRule : Rule Context Nat :=
-  ⟨"notice/D006-19/paragraph/1/ka/13",
-    ⟨.notification, "保医発0430第4号・05-18差替版", "2026-06-01適用",
-      "PDF10頁 D006-19(1)カ⑬", .checkedAgainstSource,
-      some "https://kouseikyoku.mhlw.go.jp/kantoshinetsu/080525_016.pdf"⟩,
-    fun c _ => ∀ t, c.path = some (.deduction t) → ListedEarlierTest t ∨ AddedAlkTest t⟩
+def listedDeductionRule : Rule Context Nat :=
+  ⟨"notice/D006-19/paragraph/1/ka", notice "PDF348頁 D006-19(1)カ",
+    fun c _ => ∀ t, c.path = some (.deduction t) → ListedDeduction t⟩
+
+def hematologicPathRule : Rule Context Nat :=
+  ⟨"notice/D006-19/paragraph/2", notice "PDF348–349頁 D006-19(2)",
+    fun c _ => c.item = .hematologic → c.path = some .submission⟩
 
 def hematologicRule : Rule Context Nat :=
   ⟨"notice/D006-19/paragraph/2/a", notice "PDF348–349頁 D006-19(2)ア",
@@ -285,8 +433,8 @@ def hematologicDocumentation : Rule Context Documentation :=
 
 def rules : List (Rule Context Nat) :=
   [solidRate, hematologicRate, facilityRule, deductionRate, solidPathRule, solidRule, solidPatientRule,
-    ccatProcedureRule, ccatDispositionRule, consentRule, solidDeductionRule, alkAmendmentRule,
-    hematologicRule, hematologicConsentRule]
+    ccatProcedureRule, ccatDispositionRule, consentRule, solidDeductionRule, listedDeductionRule,
+    hematologicPathRule, hematologicRule, hematologicConsentRule]
 
 def Eligible (c : Context) : Prop :=
   Facility c ∧ CcatProcedure c ∧ CcatDisposition c ∧ c.consentProcedureFollowed = some true ∧
@@ -294,7 +442,7 @@ def Eligible (c : Context) : Prop :=
     ((c.item = .solid ∧ SolidSubmission c ∧ SolidPatient c) ∨
      (c.item = .hematologic ∧ HematologicSubmission c))) ∨
    (∃ t, c.path = some (.deduction t) ∧ c.item = .solid ∧ SolidPatient c ∧
-    Deduction c t ∧ (ListedEarlierTest t ∨ AddedAlkTest t) ∧ c.b011_5FromEarlierResult = some true ∧ t.points ≤ 44000))
+    Deduction c t ∧ ListedDeduction t ∧ c.b011_5FromEarlierResult = some true ∧ t.points ≤ 44000))
 
 theorem no_result_without_path (c : Context) (h : c.path = none) : ¬ SatisfiableAt rules c := by
   rintro ⟨p, hp⟩
@@ -309,7 +457,7 @@ private theorem submission_iff (c : Context) (p : Nat) (h : c.path = some .submi
   cases i : c.item <;>
     simp [rules, satisfies_cons, satisfies_nil, solidRate, hematologicRate, facilityRule,
       deductionRate, solidPathRule, solidRule, solidPatientRule, ccatProcedureRule, ccatDispositionRule,
-      consentRule, solidDeductionRule, alkAmendmentRule, hematologicRule, hematologicConsentRule,
+      consentRule, solidDeductionRule, listedDeductionRule, hematologicPathRule, hematologicRule, hematologicConsentRule,
       Eligible, points, h, i, and_comm, and_left_comm, and_assoc]
 
 private theorem deduction_iff (c : Context) (t : EarlierTest) (p : Nat)
@@ -318,7 +466,7 @@ private theorem deduction_iff (c : Context) (t : EarlierTest) (p : Nat)
   cases i : c.item
   · simp [rules, satisfies_cons, satisfies_nil, solidRate, hematologicRate, facilityRule,
       deductionRate, solidPathRule, solidRule, solidPatientRule, ccatProcedureRule, ccatDispositionRule,
-      consentRule, solidDeductionRule, alkAmendmentRule, hematologicRule, hematologicConsentRule,
+      consentRule, solidDeductionRule, listedDeductionRule, hematologicPathRule, hematologicRule, hematologicConsentRule,
       Eligible, points, h, i]
     constructor
     · intro h
@@ -326,7 +474,7 @@ private theorem deduction_iff (c : Context) (t : EarlierTest) (p : Nat)
       exact ⟨eq, f, proc, disp, cons, s, d, listed, b, by omega⟩
     · rintro ⟨eq, f, proc, disp, cons, s, d, listed, b, _⟩
       exact ⟨f, ⟨b, eq⟩, s, proc, disp, cons, d, listed⟩
-  · simp [rules, satisfies_cons, satisfies_nil, hematologicRule, Eligible, h, i]
+  · simp [rules, satisfies_cons, satisfies_nil, hematologicPathRule, Eligible, h, i]
 
 theorem determines : DeterminesOn Eligible rules := by
   intro c hc
@@ -383,7 +531,7 @@ example : Satisfies rules deductionExample 41500 := by
   refine (deduction_iff _ _ _ rfl).mpr ⟨rfl, ⟨rfl, rfl⟩, ⟨rfl, rfl⟩, Or.inr (Or.inl rfl), rfl,
     Or.inr ⟨earlierAlk, rfl, rfl, ⟨Or.inl rfl, rfl⟩, ?_, Or.inr ?_, rfl, by decide⟩⟩
   · exact ⟨Or.inl rfl, ⟨rfl, ⟨100, rfl, by decide⟩, rfl⟩, rfl, rfl, rfl, rfl, rfl, Nat.le_refl _⟩
-  · simp [AddedAlkTest, earlierAlk]
+  · simp [earlierRule13, AddedAlkTest, earlierAlk]
 
 private def hematologicExample : Context :=
   { solidExample with
@@ -396,6 +544,6 @@ private def hematologicExample : Context :=
 example : Satisfies rules hematologicExample 44000 := by
   refine (submission_iff _ _ rfl).mpr ⟨rfl, ⟨rfl, rfl⟩, ⟨rfl, rfl⟩, Or.inr (Or.inl rfl),
     rfl, Or.inl ⟨rfl, rfl, Or.inr ⟨rfl, rfl, ⟨rfl, ⟨100, rfl, by decide⟩, rfl⟩,
-      ⟨.marrow, by simp, rfl⟩, ⟨1, rfl, rfl⟩, Or.inl ⟨rfl, .aml, by simp, rfl⟩⟩⟩⟩
+      ⟨.marrow, by simp, rfl⟩, ⟨1, rfl, rfl⟩, Or.inl ⟨rfl, hematologic_i_1, by simp [hematologic_i_diseases], rfl⟩⟩⟩⟩
 
 end Sanri.MedicalFee.D006Profiling

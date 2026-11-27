@@ -12,7 +12,7 @@ class FeeBacklogTests(unittest.TestCase):
         inventory = {
             "rows": [
                 dict(anchor(2, 3, 3), code="D026", status="listed"),
-                dict(anchor(2, 3, 2), code="D008", status="listed"),
+                dict(anchor(2, 3, 2), code="D025", status="listed"),
                 dict(anchor(2, 10, 4), code="K999-999", status="listed"),
                 dict(anchor(2, 10, 5), code="K998", status="deleted"),
                 dict(anchor(2, 10, 6), code="K990からK997まで", status="deleted_group"),

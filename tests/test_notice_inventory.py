@@ -4,7 +4,11 @@ import unittest
 
 from tools.draft_fee import notice_excerpt
 from tools.notice_inventory import build_notice
-from tools.specimen_backlog import amendment_branch_matches, compare_clauses, matches_replacement
+from tools.pdf_sources import NOTICE_SOURCE
+from tools.specimen_backlog import (
+    amendment_branch_matches, compare_clauses, matches_nested_additions, matches_replacement,
+    nested_notice_paths,
+)
 
 
 class NoticeInventoryTests(unittest.TestCase):
@@ -40,6 +44,38 @@ class NoticeInventoryTests(unittest.TestCase):
         self.assertEqual(amendment_branch_matches(
             paragraph, parent, {path: [{**rule, "edition": "2026-11-01適用"}]}
         ), set())
+
+    def test_nested_kana_restarts_the_ordinal_scope(self):
+        pages = [
+            " ア  合成枝\n    (イ)  合成小枝\n      ①  合成項目\n",
+            "    (ロ)  合成小枝\n      ①  合成項目\n    (ロ)の続き\n    イ  次の枝",
+        ]
+        child = {"start": {"page": 1, "line": 1}, "end": {"page": 2, "line": 3}}
+        base = "notice/D997/paragraph/1/a"
+        self.assertEqual(nested_notice_paths(child, base, pages),
+                         [f"{base}/i", f"{base}/i/1", f"{base}/ro", f"{base}/ro/1"])
+
+    def test_nested_additions_require_both_baseline_and_every_amendment(self):
+        url = "https://example.test/addition.pdf"
+        additions = [{"page": 2, "line": n, "text": f"    {n}  合成項目", "source": "addition.pdf"}
+                     for n in (3, 4)]
+        paragraph = {
+            "amendments": [
+                {"document": "addition.pdf", "operation": "add", "effective_from": "2026-07-01",
+                 "anchor": f"(1)カ{n - 1}", "new_locator": str(n),
+                 "records": [row], "source": {"url": url}}
+                for n, row in zip((3, 4), additions)
+            ],
+            "effective_records": [{"source": "baseline"}, *additions],
+        }
+        base = "notice/D997/paragraph/1"
+        amendment = {"url": url, "edition": "2026-07-01適用",
+                     "verification": "checkedAgainstSource"}
+        baseline = {"url": NOTICE_SOURCE["url"], "verification": "checkedAgainstSource"}
+        rules = {base: [baseline], f"{base}/ka/3": [amendment], f"{base}/ka/4": [amendment]}
+        self.assertTrue(matches_nested_additions(paragraph, base, rules))
+        self.assertFalse(matches_nested_additions(paragraph, base, {**rules, base: []}))
+        self.assertFalse(matches_nested_additions(paragraph, base, {**rules, f"{base}/ka/4": []}))
 
     def test_scope_spans_and_unresolved_references(self):
         pages = [

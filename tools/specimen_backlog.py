@@ -62,6 +62,46 @@ def amendment_branch_matches(paragraph: dict, identifier: str, rules_by_path: di
     return matches
 
 
+def nested_notice_paths(child: dict, identifier: str, pages: list[str]) -> list[str]:
+    """登録版のカナ枝内にある括弧付きカナと丸数字を位置範囲内で照合する。"""
+    paths = []
+    parent = identifier
+    start, end = child["start"], child["end"]
+    for page in range(start["page"], end["page"] + 1):
+        for line, raw in enumerate(pages[page - 1].splitlines(), 1):
+            if (page, line) <= (start["page"], start["line"]) or (page, line) > (end["page"], end["line"]):
+                continue
+            label = raw.lstrip()
+            kana = re.match(r"[（(]([ァ-ヶ])[）)]\s+", label)
+            ordinal = re.match(r"([①-⑳])\s+", label)
+            if kana and (kana[1] in KANA or kana[1] == "ロ"):
+                parent = f"{identifier}/{KANA.get(kana[1], 'ro')}"
+                paths.append(parent)
+            elif ordinal:
+                paths.append(f"{parent}/{ord(ordinal[1]) - ord('①') + 1}")
+    return paths
+
+
+def matches_nested_additions(paragraph: dict, identifier: str, rules_by_path: dict) -> bool:
+    """登録版の段落と、適用済みの丸数字の追加をいずれも確認する。"""
+    if "replacement" in paragraph or not paragraph.get("effective_records"):
+        return False
+    if not any(rule.get("verification") == "checkedAgainstSource"
+               and rule.get("url") == NOTICE_SOURCE["url"]
+               for rule in rules_by_path.get(identifier, [])):
+        return False
+    additions = paragraph["amendments"]
+    expected = set()
+    for change in additions:
+        match = re.fullmatch(r"\(\d+\)([ァ-ヶ])\d+", change.get("anchor") or "")
+        locator = change.get("new_locator") or ""
+        if change["operation"] != "add" or not match or match[1] not in KANA or not locator.isdecimal():
+            return False
+        expected.add(f"{identifier}/{KANA[match[1]]}/{locator}")
+    return len(expected) == len(additions) and bool(expected) and (
+        expected == amendment_branch_matches(paragraph, identifier, rules_by_path))
+
+
 def compare_clauses(fee: dict, notice: dict, rules: list[dict],
                     revisions: dict | None = None, notice_pages: list[str] | None = None
                     ) -> tuple[dict, dict]:
@@ -86,7 +126,10 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
                 found[identifier] += 1
                 for child in paragraph["children"]:
                     if "id_suffix" in child:
-                        found[f"{identifier}/{child['id_suffix']}"] += 1
+                        child_id = f"{identifier}/{child['id_suffix']}"
+                        found[child_id] += 1
+                        if notice_pages is not None:
+                            found.update(nested_notice_paths(child, child_id, notice_pages))
 
     check = {"checked": len(expected), "matched": sorted(key for key in expected if found[key] == 1),
              "missing": sorted(key for key in expected if not found[key]),
@@ -125,7 +168,8 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
             if (len(blocks) == 1 and not unresolved
                     and matches_replacement(paragraph, rules_by_path.get(identifier, []))):
                 replacement_matches.add(identifier)
-            else:
+            elif not (len(blocks) == 1 and not unresolved and identifier in matches
+                      and matches_nested_additions(paragraph, identifier, rules_by_path)):
                 unmatched_notice.append(paragraph)
         unchanged_numbers = {str(p["number"]) for p in paragraphs if p["status"] == "baseline"}
         matched_branches = [key for key in check["matched"] if key.startswith(f"notice/{code}/")

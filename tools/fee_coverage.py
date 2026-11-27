@@ -63,9 +63,11 @@ _GROUPS = [
     ("reference", "SpecimenJudgment",
      "D004-2 D006-2 D006-3 D006-4 D006-5 D006-6 D006-7 D006-8 D006-9 "
      "D006-11 D006-12 D006-13 D006-14 D006-15 D006-16 D006-17 D006-18 D006-19 D006-20 "
-     "D006-22 D006-23 D006-24 D006-25 D006-26 D006-27 D006-28 D006-29 D006-30 D006-31",
+     "D006-22 D006-23 D006-24 D006-25 D006-26",
      "D026の遺伝子判断料への振分けとは別に、実施料の項別算定を追加する"),
-    ("reference", "UrineFecalTests", "D008", "D001の準用先の実施料・各注を形式化する"),
+    ("model", "D006PlasmaPanel", "D006-27", "組織検査等との併施調査を既存の実施記録と結ぶ"),
+    ("model", "D006Late", "D006-28 D006-29 D006-30 D006-31", "施設基準と指針の参照を解決する"),
+    ("model", "D008", "D008", "適格な検体・併施選択から上位通則への接続を検証する"),
     ("reference", "Examinations", "D025", "特定機能病院の入院検査で入力する基本実施料を形式化する"),
     ("reference", "SpecimenJudgment", "D027", "D026が参照する入院判断料の本体と加算を形式化する"),
     ("reference", "PhysiologicalExaminations",
@@ -133,7 +135,7 @@ def clause_paths(rule: dict) -> list[tuple[str, ...]]:
         patterns = {
             "primary": (rf"{division}/(?:heading|item/{number}(?:/note(?:/{number})?)?|note/(?:{number}|{kana}|unnumbered/{number}))",
                         rf"ch{number}-part{number}(?:-section{number})?(?:-subsection{number})?/general/{number}"),
-            "notice": (rf"{division}/paragraph/(?:{number}(?:/{kana}(?:/{number})?)?|unnumbered)",),
+            "notice": (rf"{division}/paragraph/(?:{number}(?:/{kana}(?:/{number}|/{kana}(?:/{number})?)?)?|unnumbered)",),
             "clarification": (rf"[a-z0-9-]+/question/{number}",),
         }
         tail = "/".join(parts[1:])

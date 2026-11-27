@@ -101,7 +101,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 
 同じ外来範囲で、[D006-4](./Sanri/D006Genetic.lean)の遺伝学的検査、[D006-5](./Sanri/D006Chromosome.lean)の染色体検査、[D006-6〜13](./Sanri/D006GeneTests.lean)と[D006-14〜18](./Sanri/D006Oncology.lean)の実施料を追加しました。D006-17は2026-07-01適用の準用を含みます。外部入力に残した条件と未着手の区分は[検証状況](./docs/validation-status.md)に記録しています。
 
-同じ外来範囲で、D006-19のがんゲノムプロファイリング検査とD006-20〜26の実施料を追加しました。D006-19は6月1日適用分を含み、通知の下位枝の独立規則化が残ります。[D006Profiling](./Sanri/D006Profiling.lean)・[D006Targeted](./Sanri/D006Targeted.lean)
+同じ外来範囲で、D006-19のがんゲノムプロファイリング検査とD006-20〜26の実施料を追加しました。D006-19は6月1日適用分を含み、通知の下位枝にも独立した規則があります。[D006Profiling](./Sanri/D006Profiling.lean)・[D006Targeted](./Sanri/D006Targeted.lean)
+
+基準診療日2026-10-22の外来について、D006-27はD006-12を含む一採血の包括、D006-28〜31は個別の適格性と算定歴を扱います。D008は全54項の検査種、D007のALP併施制限、D001・D004の準用による同日包括を扱います。点数の定理は確認済みの適格性・採血・併施選択を前提とします。[D006PlasmaPanel](./Sanri/D006PlasmaPanel.lean)・[D006Late](./Sanri/D006Late.lean)・[D008](./Sanri/D008.lean)
 
 Ｄ００６－２７〜３１・Ｄ００８の個別検査、Ｄ０２７、脳波・神経・眼科・内視鏡等の未提示の生体検査区分は未実装です。Ｄ２２１は削除として算定項目を作っていません。
 
