@@ -1,4 +1,5 @@
 import Sanri.SpecimenOutpatientDay
+import Sanri.SpecimenCollectionGeneral
 import Sanri.SpecimenJudgmentRouting
 import Sanri.HistoryConnections
 import Sanri.GlycemicTests
@@ -90,6 +91,83 @@ theorem retained_iff (choices : List GroupChoice) (agree : Agree choices) :
     by_cases hm : id ∈ g.group.members
     · exact Or.inr ((agree c hc g hg id hid hm).mp hs)
     · exact Or.inl (by simpa using hm)
+
+/-- 同じ実施IDを共有する群の対。入力列内の位置を返す。 -/
+def overlappingGroups (groups : List ChoiceGroup) : List (Nat × Nat × List Nat) :=
+  groups.zipIdx.flatMap fun (left, i) =>
+    groups.zipIdx.filterMap fun (right, j) =>
+      let shared := left.members.filter right.members.contains
+      if i < j && !shared.isEmpty then some (i, j, shared.eraseDups) else none
+
+private def selections : List Nat → List (List Nat)
+  | [] => [[]]
+  | id :: rest =>
+    let tails := selections rest
+    tails ++ tails.map (id :: ·)
+
+private theorem filter_mem_selections (ids : List Nat) (keep : Nat → Bool) :
+    ids.filter keep ∈ selections ids := by
+  induction ids with
+  | nil => simp [selections]
+  | cons id rest ih =>
+    cases h : keep id
+    · simp [h, selections, ih]
+    · simpa only [List.filter_cons, h, Bool.false_eq_true, ite_true, ↓reduceIte,
+        selections, List.mem_append] using
+        (Or.inr (List.mem_map.mpr ⟨rest.filter keep, ih, rfl⟩) :
+          id :: rest.filter keep ∈ selections rest ∨
+            id :: rest.filter keep ∈ (selections rest).map (id :: ·))
+
+/-- 確認済みの適用群を、実施IDごとの共通採否で全探索する。
+原文が算定側・除外側を指定する場合は required・excluded に渡す。 -/
+def consistentSelections (groups : List ChoiceGroup) (required excluded : List Nat) :
+    List (List Nat) :=
+  let ids := ((groups.flatMap ChoiceGroup.members) ++ required ++ excluded).eraseDups
+  (selections ids).filter fun selected =>
+    required.all selected.contains && excluded.all (fun id => !selected.contains id) &&
+    groups.all (fun g => g.members.eraseDups == g.members &&
+      (g.members.filter selected.contains).length == g.count)
+
+theorem consistentSelections_contains (groups : List ChoiceGroup)
+    (required excluded : List Nat) (keep : Nat → Bool)
+    (requires : required.all keep = true) (excludes : excluded.all (fun id => !keep id) = true)
+    (counts : groups.all (fun g => g.members.eraseDups == g.members &&
+      (g.members.filter keep).length == g.count) = true) :
+    let ids := ((groups.flatMap ChoiceGroup.members) ++ required ++ excluded).eraseDups
+    ids.filter keep ∈ consistentSelections groups required excluded := by
+  intro ids
+  have preserved (id : Nat) (member : id ∈ ids) :
+      (ids.filter keep).contains id = keep id := by
+    cases h : keep id <;> simp [h, member]
+  apply List.mem_filter.mpr
+  refine ⟨filter_mem_selections ids keep, ?_⟩
+  simp only [Bool.and_eq_true, List.all_eq_true] at requires excludes counts ⊢
+  refine ⟨⟨?_, ?_⟩, ?_⟩
+  · intro id member
+    rw [preserved id (by simp [ids, member])]
+    exact requires id member
+  · intro id member
+    rw [preserved id (by simp [ids, member])]
+    exact excludes id member
+  · intro g member
+    have items : g.members.filter (ids.filter keep).contains = g.members.filter keep :=
+      List.filter_congr fun id hid => preserved id (by
+        simp only [ids, List.mem_eraseDups, List.mem_append, List.mem_flatMap]
+        exact Or.inl (Or.inl ⟨g, member, hid⟩))
+    simpa only [items] using counts g member
+
+example :
+    let source := UrineSediment.microscopySelectionRule.source
+    let groups : List ChoiceGroup := [⟨source, [1, 2], 1⟩, ⟨source, [1, 3], 1⟩,
+      ⟨source, [2, 3], 1⟩]
+    overlappingGroups groups = [(0, 1, [1]), (0, 2, [2]), (1, 2, [3])] ∧
+      consistentSelections groups [] [] = [] ∧
+      consistentSelections (groups.eraseIdx 0) [] [] ≠ [] ∧
+      consistentSelections (groups.eraseIdx 1) [] [] ≠ [] ∧
+      consistentSelections (groups.eraseIdx 2) [] [] ≠ [] := by decide
+
+example :
+    consistentSelections [⟨D017.sedimentChoice.source, [1, 2], 1⟩] [1] [1] = [] := by decide
 
 inductive BundleUnit where
   | draw | specimen | day
@@ -301,6 +379,63 @@ def hematologicMonthlyGroup (site : Site) (institution : Option Nat)
   else if (rows.map Performance.item).eraseDups.length < 2 then some []
   else some [⟨D004Tumor.hematologicRule.source, ids, 1⟩]
 
+/-- D006-22(3)。大腸癌の組織RAS・KRASを確認済みの暦月履歴から選ぶ。 -/
+def plasmaRasMonthlyGroup (row : Performance Unit)
+    (survey : Snapshot D004Tumor.Context) : Option (List ChoiceGroup) := do
+  let tissue ← survey.select (·.performance.site)
+    ⟨row.site.patient, none, .month row.site.date.month⟩ (fun _ => true)
+  let counterparts ← tissue.filterM D006Targeted.PlasmaRas.tissueCounterpart
+  let ids := row.id :: counterparts.map (·.performance.id)
+  if ids.eraseDups != ids then none
+  else if counterparts.isEmpty then some []
+  else some [⟨D006Targeted.PlasmaRas.principalRule.source, ids, 1⟩]
+
+def plasmaRasMonthlyInput (c : D006Targeted.PlasmaRas.Context) (row : Performance Unit)
+    (survey : Snapshot D004Tumor.Context) (choices : List GroupChoice) :
+    Option D006Targeted.PlasmaRas.Context := do
+  if c.site != row.site then none
+  else
+    let groups ← plasmaRasMonthlyGroup row survey
+    let scope : Scope := ⟨row.site.patient, none, .month row.site.date.month⟩
+    let tissue ← survey.select (·.performance.site) scope (fun _ => true)
+    let counterparts ← tissue.filterM D006Targeted.PlasmaRas.tissueCounterpart
+    let principal (institution other : Nat) :=
+      if counterparts.any (fun t => t.performance.site.institution == institution &&
+          t.performance.id == other) then
+        let applicable := choices.filter (fun g => groups.contains g.group)
+        if applicable.isEmpty then none else some (retained applicable row.id)
+      else none
+    return { c with tissueSurvey := some ⟨survey.coverage, counterparts.map (·.performance)⟩
+                    principal }
+
+private instance (counterpart : D006Targeted.LungPanel.Counterpart) :
+    Decidable (D006Targeted.LungPanel.Relevant counterpart) := by
+  cases counterpart with
+  | tissue item assay method =>
+    cases item <;> unfold D006Targeted.LungPanel.Relevant <;> infer_instance
+  | _ => exact isTrue trivial
+
+/-- D006-24(2)。併施の範囲を確認した一覧から告示項・検査種の該当分を得る。 -/
+def lungPanelGroup (c : D006Targeted.LungPanel.Context)
+    (survey : List (Performance D006Targeted.LungPanel.Counterpart)) :
+    Option (List ChoiceGroup) := do
+  let row := c.performance
+  let relevant := survey.filter (fun other => decide (D006Targeted.LungPanel.Relevant other.item))
+  let ids := row.id :: relevant.map Performance.id
+  if ids.eraseDups != ids || relevant.any (fun p => p.site.patient != row.site.patient) then none
+  else if relevant.isEmpty then some []
+  else some [⟨D006Targeted.LungPanel.principalRule.source, ids, 1⟩]
+
+def lungPanelInput (c : D006Targeted.LungPanel.Context)
+    (survey : List (Performance D006Targeted.LungPanel.Counterpart)) (choices : List GroupChoice) :
+    Option D006Targeted.LungPanel.Context := do
+  let groups ← lungPanelGroup c survey
+  let applicable := choices.filter (fun choice => groups.contains choice.group)
+  let principal (institution other : Nat) :=
+    if applicable.isEmpty || !survey.any (fun p => p.site.institution == institution && p.id == other)
+    then none else some (retained applicable c.performance.id)
+  return { c with performedTogether := some survey, principal }
+
 /-- D004-2(7)(8)の相手を、同月の確認範囲から取得する。 -/
 def tumorMonthlyGroups (c : D004Tumor.Context) (institution : Option Nat)
     (survey : Snapshot (Performance D004Tumor.OtherTest)) : Option (List ChoiceGroup) := do
@@ -443,6 +578,18 @@ def urineSpecialSelectionInput (c : D001.Context) (choices : List GroupChoice) :
     retained (choices.filter fun choice => choice.group.source == source) c.performance.id = true
   { c with renalSimultaneousSelection := selectedBy D001.renalRule.source
            lfabpNgalSelection := selectedBy D001.lfabpNgalRule.source }
+
+/-- D001(3)。対象項目を同時実施IDで照合する。三月枠は区分側で評価する。 -/
+def renalSimultaneousGroup (c : D001.Context)
+    (survey : List (Performance UrineFecalTests.UrineSpecial)) : Option (List ChoiceGroup) := do
+  let row := c.performance
+  if !D001.renalItem row.item then return []
+  let peers ← (survey.filter fun other => other.id != row.id && D001.renalItem other.item &&
+    other.site.patient == row.site.patient).filterM row.simultaneousWith
+  let ids := row.id :: peers.map Performance.id
+  if ids.eraseDups != ids then none
+  else if peers.isEmpty then some []
+  else some [⟨D001.renalRule.source, ids, 1⟩]
 
 /-- D003(4)ウ。同じ目的のD313を収録した実施履歴を照会する。 -/
 def colonoscopyGroup (stool : D003.Context) (institution : Option Nat)
@@ -1319,10 +1466,19 @@ def coagulationDraw (anchor : Performance D006.Item) (rows : List D006.Context) 
     Option D006.DrawGroup :=
   (contextBundleMembers ⟨6, 0, .draw⟩ anchor D006.Context.performance rows).map (⟨anchor, ·⟩)
 
+/-- 採否を固定したD006実施を採血キーで集める。選択自体の整合性は別に検証する。 -/
+def selectedCoagulationDraw (choices : List GroupChoice) (anchor : Performance D006.Item)
+    (rows : List D006.Context) : Option D006.DrawGroup :=
+  coagulationDraw anchor (rows.filter fun c => retained choices c.performance.id)
+
 theorem coagulationDraw_points (g : D006.DrawGroup) (valid : g.Valid)
     (known : ∀ c ∈ g.tests, D006.AddOnKnown c) :
     ∃ p, D006.Payable g p ∧ ∀ q, D006.Payable g q → q = p :=
   D006.payable_determines g valid known
+
+def coagulationCharge (g : D006.DrawGroup) (valid : g.Valid)
+    (known : ∀ c ∈ g.tests, D006.AddOnKnown c) : Charge :=
+  ⟨D006.Payable g, coagulationDraw_points g valid known⟩
 
 /-- D006-4注2では採取群の他の疾患も保持し、主検査の等級から点数を決める。 -/
 def geneticDiseaseDraw (anchor : Performance Nat) (rows : List D006Genetic.Examination)
@@ -1560,6 +1716,22 @@ def chemistryRapidCountBasis (row : Performance BloodChemistry.Item)
   (assessedChemistryItems row rows choices context).map fun items =>
     if 5 ≤ items.length then .bundled .chemistry else .individual
 
+/-- D006注の包括は、迅速加算通知(2)で算入する実施項目数の対象。 -/
+def coagulationRapidCountBasis (g : D006.DrawGroup) (_ : g.Valid)
+    (id : Nat) : Option RapidCountBasis := do
+  let c ← g.tests.find? (fun c => c.performance.id == id)
+  return if c.item.bundleEligible && 3 ≤ g.bundled.length then
+    .bundled .coagulation
+  else .individual
+
+/-- 適格で算定対象となるD006の単独・包括実施をD026へ渡す。 -/
+def coagulationDayTest (g : D006.DrawGroup) (_ : g.Valid) (id : Nat)
+    (coverage : SpecimenJudgment.IncludedTest)
+    (emergency : Option SpecimenOutpatientDay.EmergencyTest)
+    (rapid : Option SpecimenOutpatientDay.RapidTest) : Option DayTest := do
+  let c ← g.tests.find? (fun c => c.performance.id == id)
+  return ⟨id, c.performance.site, { coverage with test := D006.judgmentTest c.item }, some true, emergency, rapid⟩
+
 /-- D008の包括に入る採否確認後の実施一覧から、通知(2)の項目候補を射影する。
 当日の説明・文書交付・診療等は RapidTest の入力に残る。 -/
 def endocrineRapidCountBasis (items : List D008.BundleItem) (item : D008.BundleItem) :
@@ -1662,6 +1834,58 @@ def collectionCharge (c : SpecimenCollection.Context)
     obtain ⟨p, hp⟩ := h
     exact ⟨p, hp, fun _ hq => Option.some.inj (hq.symm.trans hp)⟩⟩
 
+/-- 第4節通知通則3。二件の同定と同日・同一処置の照合を済ませた群。 -/
+def sharedPunctureGroup (context : SpecimenCollectionGeneral.SharedPuncture)
+    (_ : SpecimenCollectionGeneral.Covers context) (collection treatment : Nat) : Option ChoiceGroup :=
+  if collection = treatment then none
+  else some ⟨SpecimenCollectionGeneral.exclusive.source, [collection, treatment], 1⟩
+
+theorem shared_puncture_selection (context : SpecimenCollectionGeneral.SharedPuncture)
+    (_ : SpecimenCollectionGeneral.Covers context) (collection treatment : Nat)
+    (distinct : collection ≠ treatment) (selected : Nat) :
+    let group : ChoiceGroup := ⟨SpecimenCollectionGeneral.exclusive.source, [collection, treatment], 1⟩
+    SpecimenCollectionGeneral.exclusive.holds context
+      ⟨retained [⟨group, [selected]⟩] collection, retained [⟨group, [selected]⟩] treatment⟩ := by
+  intro group _
+  by_cases h : selected = collection
+  · exact Or.inr (by simp [group, retained, h, Ne.symm distinct])
+  · exact Or.inl (by simp [group, retained, Ne.symm h])
+
+/-- 採取の既存評価から、別算定される第4節相当額を日次内訳へ射影する。
+フィルムの費用は第4節外のため、既存の toCollection で除く。 -/
+def Day.withCollectionAssessments (c : Day) (assessments : List SpecimenCollection.Assessment) :
+    Day :=
+  { c with collection := assessments.filterMap fun a =>
+      (a.toCollection 0).map fun charge =>
+        ⟨fun p => p = charge.scheduledPoints, charge.scheduledPoints, rfl, fun _ h => h⟩ }
+
+/-- 採取の算定済み履歴と適格性は既存評価の入力に保持する。 -/
+def Day.withCollectionContexts (c : Day) (collections : List SpecimenCollection.Context) :
+    Option Day :=
+  (SpecimenCollection.assessDay collections).map c.withCollectionAssessments
+
+theorem day_determines_from_collection_contexts (c day : Day)
+    (collections : List SpecimenCollection.Context)
+    (resolved : c.withCollectionContexts collections = some day)
+    (site : c.additions.site = c.judgment.day.site)
+    (judgment : c.judgment.Eligible)
+    (emergency : c.additions.selection = .emergency →
+      SpecimenOutpatientDay.EmergencyConfirmed c.additions ∧
+      c.additions.emergencyClaimed = some false ∧ c.additions.priorRapidItems = some [] ∧
+      c.additions.nightEarlyMorningAddition = false)
+    (rapid : c.additions.selection = .rapid → ∃ prior,
+      c.additions.priorRapidItems = some prior ∧ prior.Nodup ∧ prior.length ≤ 5 ∧
+      c.additions.emergencyClaimed = some false) :
+    ∃ r, day.Permits r ∧ ∀ other, day.Permits other → other = r := by
+  cases assessment : SpecimenCollection.assessDay collections with
+  | none => simp [Day.withCollectionContexts, assessment] at resolved
+  | some assessments =>
+    have hd : c.withCollectionAssessments assessments = day := by
+      simpa [Day.withCollectionContexts, assessment] using resolved
+    rw [← hd]
+    exact day_determines_with_addition_history (c.withCollectionAssessments assessments)
+      site judgment emergency rapid
+
 private def sampleSite : Site := ⟨1, 2, ⟨⟨2026, 10⟩, ⟨22, by decide⟩⟩⟩
 
 /-- PSA、遊離型PSA比、S2,3PSA、phiの四実施で、重複する三規則を
@@ -1675,8 +1899,10 @@ example :
     let groups := ([.s23, .phiPsa, .phiRatio] : List MarkerCombination).filterMap
       (fun kind => markerGroup kind rows)
     (groups.map ChoiceGroup.members) = [[1, 2, 3, 4], [1, 4], [2, 4]] ∧
+    overlappingGroups groups = [(0, 1, [1, 4]), (0, 2, [2, 4]), (1, 2, [4])] ∧
+    consistentSelections groups [] [] = [[4]] ∧
     SatisfiableAt ((groups.map fun g => GroupChoice.mk g [4]).map GroupChoice.rule) () := by
-  refine ⟨rfl, ?_⟩
+  refine ⟨rfl, rfl, rfl, ?_⟩
   apply (choice_rules_satisfiable _ ?_).mpr
   · intro a ha b hb id _ _
     obtain ⟨_, _, rfl⟩ := List.mem_map.mp ha
