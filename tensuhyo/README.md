@@ -190,3 +190,8 @@ git check-ignore tensuhyo/inventory/{notice-revisions,notice-impact,clarificatio
 `inventory/` に医科通知の改正・訂正位置と比較根拠を含む `notice-revisions.json`、条項台帳・準用コードとの照合を含む `notice-impact.json`、問別の `clarification-index.json`、頁数と見出し候補の `facility-index.json` を出力します。改正に新旧対照表がある場合は該当区分の見出し位置も記録し、段落の抽出には本文の改正文を用います。訂正資料の変更履歴は挿入・取消が同じテキスト層に出る箇所があり、未確定を記録します。施設基準の見出し候補はPDF上の物理頁で、告示の縦書きと通知内の階層・帳票境界はレビューが必要です。
 
 `specimen-backlog.json` の `clarification_questions` は、基準日以前に発出された索引の医科関連の問で当該区分が明示される件数です。対象の置換を識別できた訂正前の問は除きます。索引がない場合は `null` を出力します。件数は明示区分の機械抽出範囲を表します。
+
+
+改正・訂正索引があれば、`draft_fee` の `review.json` に `notice_revisions` を、同じフォルダに `revisions.txt` を出力します。登録版の抜き出しと併せて、適用済み指示、基準日後に適用される指示、訂正PDFの該当位置を確認できます。索引未生成時は索引なしと表示します。「取得済み資料の範囲では該当なし」は索引での確認結果です。
+
+`specimen-backlog.json` の `notice_paragraph_records` は基準日の段落を `baseline`（登録版のまま）、`amended`（変更）、`added`（新設）、`deleted`（削除）で記録します。変更・新設の抽出行は `effective_records` で出典を追えます。差分の位置が曖昧な場合は要確認になります。11月適用分は `future_notice_amendments`、訂正箇所の画像確認結果は `specimen_corrections` にあります。通知参照IDの照合報告は登録版の位置を対象にします。改正段落の枝の件数は確認待ちです。

@@ -1,4 +1,5 @@
 import Sanri.Examinations
+import Sanri.Logic
 
 namespace Sanri.MedicalFee.SpecimenJudgment
 
@@ -41,9 +42,17 @@ structure Test where
   specialistWrittenReport : Bool := false
   deriving DecidableEq, Repr
 
-/-- 注３。Ｄ００６－10・21など、指定範囲の隙間を含めない。 -/
+def d026RoutingSource : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0305第6号 別添1"
+  edition := "2026-04-02訂正"
+  location := "訂正PDF 4頁、登録版PDF 402頁 D026(6)"
+  verification := .checkedAgainstSource
+}
+
+/-- 出典は `d026RoutingSource`。D004-3は区分単位で振り分ける。 -/
 def geneRouting (t : Test) : Bool :=
-  decide ((t.major = 4 ∧ t.suffix = 2 ∧ t.number = 1) ∨
+  decide ((t.major = 4 ∧ ((t.suffix = 2 ∧ t.number = 1) ∨ t.suffix = 3)) ∨
     (t.major = 6 ∧ ((2 ≤ t.suffix ∧ t.suffix ≤ 9) ∨
       (11 ≤ t.suffix ∧ t.suffix ≤ 20) ∨ (22 ≤ t.suffix ∧ t.suffix ≤ 31))))
 
@@ -135,6 +144,13 @@ private def gene (suffix : Nat) : Test :=
   { major := 6, suffix := suffix, ordinaryCategory := .hematological }
 private def electrophoresis : Test :=
   { major := 15, number := 16, ordinaryCategory := .immunological, specialistWrittenReport := true }
+
+private def methylation : Test := { major := 4, suffix := 3, ordinaryCategory := .urineFecal }
+
+-- 旧来の振分けではD004-3は入力の通常区分を採用していた。
+example : scheduledPoints methylation.ordinaryCategory = 34 ∧
+    categoryFor methylation = some .geneticChromosomal ∧
+    points { tests := [methylation] } = some 100 := by decide
 
 example : allCategories.map scheduledPoints = [34, 100, 125, 144, 144, 144, 150] := rfl
 example : points { tests := [urine, urine, urine] } = some 34 := by decide

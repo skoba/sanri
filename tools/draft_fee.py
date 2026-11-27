@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 from .fee_lean_draft import build_draft
 from .fee_sections import select_section
 from .local_pdf import extract_pages, verified_pdf_pages
+from .notice_revisions import load_revisions, revisions_for
 from .pdf_sources import LOCAL, NOTICE_PDF, NOTICE_SOURCE, PRIMARY_SOURCE, require_source
 
 
@@ -48,7 +49,40 @@ def notice_excerpt(code: str, index: dict, pages: list[str]) -> dict:
     return {"status": "found" if blocks else "not_found", "source": index["source"], "blocks": blocks}
 
 
-def save_draft(section, local: Path, notice: dict | None = None) -> tuple[Path, int, int]:
+def revision_excerpt(revisions: dict) -> str:
+    lines = [f"基準診療日 {revisions['as_of']}", revisions["message"]]
+    for key, label in (("amendments", "適用される一部改正"),
+                       ("future_amendments", "基準日後に適用される一部改正"),
+                       ("corrections", "訂正")):
+        if not revisions[key]:
+            continue
+        lines.extend(("", label))
+        for row in revisions[key]:
+            applies = {True: "基準日に適用", False: "基準日には未適用",
+                       None: "基準日の適用は未確定"}[row["applies_on_as_of"]]
+            location = row.get("locator") or (row["code"] or "") + (row.get("anchor") or "")
+            if row.get("new_locator") and row["operation"] == "add":
+                location += f" → {row['new_locator']}"
+            effective = row.get("effective_from")
+            timing = f"適用日 {effective}、" if effective else ""
+            if row["operation"] == "correction" and not effective:
+                timing = f"訂正発出日 {row['issued_on']}、"
+            lines.append(f"{row['document']} PDF {row['page']}頁 {row['line']}行 "
+                         f"{location}（{timing}{applies}）")
+            if row["operation"] == "correction":
+                if row.get("visual_review"):
+                    lines.append(f"訂正表示を目視照合、登録版PDF {row['baseline_reviewed_page']}頁に反映")
+                lines.append("訂正PDFの抽出層（挿入・取消が混在し得る）")
+                lines.extend(row["evidence"])
+            else:
+                lines.extend(record["text"] for record in row.get("records", []))
+                if not row.get("records") and row["evidence"]:
+                    lines.append(row["evidence"])
+    return "\n".join(lines) + "\n"
+
+
+def save_draft(section, local: Path, notice: dict | None = None,
+               revisions: dict | None = None) -> tuple[Path, int, int]:
     draft = build_draft(section, identifier=DOCUMENT, edition=EDITION, url=URL)
     report = {
         "status": "needs_review",
@@ -59,8 +93,12 @@ def save_draft(section, local: Path, notice: dict | None = None) -> tuple[Path, 
     }
     if notice is not None:
         report["notice"] = notice
+    if revisions is not None:
+        report["notice_revisions"] = revisions
     review = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     files = {"Draft.lean": draft.lean, "review.json": review}
+    if revisions is not None:
+        files["revisions.txt"] = revision_excerpt(revisions)
 
     # 原文を含む報告と草案をGit管理外の同じ場所に保存する。
     parent = local / "drafts" / section.code
@@ -110,15 +148,17 @@ def main() -> int:
             notice_pages = verified_pdf_pages(NOTICE_PDF, NOTICE_SOURCE["sha256"])
             if len(notice_pages) != notice_index["source"]["page_count"]:
                 raise ValueError("通知索引とPDFの頁数が異なります")
+        revision_index = load_revisions()
         subprocess.run(["lake", "build", "Sanri.Logic"], cwd=ROOT, check=True)
         for section in sections:
             notice = (notice_excerpt(section.code, notice_index, notice_pages) if notice_index is not None
                       else {"status": "index_missing", "blocks": []})
-            folder, rules, unresolved = save_draft(section, LOCAL, notice)
+            revisions = revisions_for(section.code, revision_index)
+            folder, rules, unresolved = save_draft(section, LOCAL, notice, revisions)
             notice_status = {"found": "通知を抽出", "not_found": "通知索引に該当なし",
                              "index_missing": "通知索引なし（tools.notice_inventory で生成）"}[notice["status"]]
             print(f"{section.code} (PDF {section.start_page}–{section.end_page}頁) "
-                  f"草案の規則 {rules} 件、未変換 {unresolved} 行、{notice_status}、要レビュー\n  {folder.relative_to(ROOT)}")
+                  f"草案の規則 {rules} 件、未変換 {unresolved} 行、{notice_status}、{revisions['message']}、要レビュー\n  {folder.relative_to(ROOT)}")
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"草案生成エラー: {error}\n")
     return 0

@@ -1,4 +1,5 @@
 import Sanri.InitialConsultation
+import Sanri.Logic
 
 namespace Sanri.MedicalFee.RevisitConsultation
 
@@ -186,7 +187,23 @@ structure Additions where
   patientWithNurseEtc : Bool := false
   deriving DecidableEq, Repr
 
+inductive TelephoneManagement where
+  | unscheduled
+  | periodic
+  /-- (8)アの経過措置の過去実績と一連の診療の継続を確認済み。 -/
+  | transitional
+  deriving DecidableEq, Repr
+
+def a001TelephoneSource : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0305第6号 別添1"
+  edition := "2026-05-29訂正"
+  location := "訂正PDF 2頁、登録版PDF 14頁 A001(8)ア"
+  verification := .checkedAgainstSource
+}
+
 structure Context where
+  telephoneManagement : Option TelephoneManagement := none
   institution : Institution
   insuranceMedicalInstitution : Bool := true
   revisitPerformed : Bool := true
@@ -210,7 +227,8 @@ def performed (c : Context) : Bool :=
   | .inPerson => c.revisitPerformed
   | .telemedicine => c.revisitPerformed && c.telemedicineStandardNotified
   | .telephoneAdvice => decide (c.adviceRequester ≠ .other) &&
-      c.therapeuticAdviceRequested && c.instructionsGiven
+      c.therapeuticAdviceRequested && c.instructionsGiven &&
+      c.telephoneManagement.any (· != .periodic)
 
 structure Breakdown where
   infant : Nat := 0
@@ -245,6 +263,8 @@ def additionBreakdown (c : Context) : Breakdown :=
   let outpatient := decide (c.status = .outpatient)
   let underSix := decide (c.ageYears < 6)
   let ta := InitialConsultation.timeAddition c.timeStandards c.time underSix
+  let timeAdditionsAllowed := ordinaryDepartment &&
+    decide (c.mode ≠ .telephoneAdvice ∨ c.telephoneManagement ≠ some .transitional)
   let a := c.additions
   let isClinic := InitialConsultation.clinic c.institution
   let comprehensive := if ordinaryDepartment && notPhone && outpatient && isClinic &&
@@ -252,8 +272,8 @@ def additionBreakdown (c : Context) : Breakdown :=
     then comprehensivePoints a.comprehensiveCategory a.comprehensivePatient else 0
   let infection := ordinaryDepartment && notPhone && isClinic && a.infectionControlNotified
   { infant := if ordinaryDepartment && underSix && decide (ta = .none) then 38 else 0
-    time := if ordinaryDepartment then timePoints ta underSix else 0
-    nightEarlyMorning := if ordinaryDepartment then
+    time := if timeAdditionsAllowed then timePoints ta underSix else 0
+    nightEarlyMorning := if timeAdditionsAllowed then
       InitialConsultation.nightEarlyMorningPoints c.institution c.timeStandards c.time ta else 0
     outpatientManagement := if ordinaryDepartment && notPhone && outpatient &&
       outpatientManagementEligible a.outpatientManagement then 52 else 0
@@ -335,8 +355,16 @@ private def ordinary : Context := {
 private def phone : Context :=
   { ordinary with
           mode := .telephoneAdvice
+          telephoneManagement := some .unscheduled
           therapeuticAdviceRequested := true
           instructionsGiven := true }
+example : points { phone with telephoneManagement := some .periodic } = none := by decide
+
+example (c : Context) (h : c.mode = .telephoneAdvice)
+    (transition : c.telephoneManagement = some .transitional) :
+    (additionBreakdown c).time = 0 ∧ (additionBreakdown c).nightEarlyMorning = 0 := by
+  simp [additionBreakdown, h, transition]
+
 private def comprehensive : Additions :=
   {
           comprehensiveNotified := true

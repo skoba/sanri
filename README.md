@@ -8,7 +8,7 @@
 
 ## ビルドと検証
 
-区分を追加するときは、ローカルの告示本文PDFを用意し、区分番号を指定すると、出典頁付きの原文とLean草案が得られます。次の例は残尿測定検査です。未変換の行も原文のまま確認できます。ローカルの通知索引を生成すると、対応する通知の位置と該当行を同じ作業先で参照できます。[PDFの配置と草案の使い方](./tensuhyo/README.md#本文pdfからlean草案を作る)
+区分を追加するときは、ローカルの告示本文PDFを用意し、区分番号を指定すると、出典頁付きの原文とLean草案が得られます。次の例は残尿測定検査です。未変換の行も原文のまま確認できます。ローカルの通知索引を生成すると、対応する通知の位置と該当行を同じ作業先で参照できます。改正・訂正索引があれば、基準診療日での適用関係と抜き出しも加わります。[PDFの配置と草案の使い方](./tensuhyo/README.md#本文pdfからlean草案を作る)
 
 ```sh
 python3 -m tools.draft_fee D216-2
@@ -67,9 +67,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 | 第３部通則１〜７、第１節通則、第１款通則１〜３ | 実施料・判断料・採取・薬剤・材料の合算、近似検査、対称器官、委託、遠隔検査実施料、緊急・迅速加算 | [Examinations.lean](./Sanri/Examinations.lean) |
 | Ｄ０００〜Ｄ００３ 尿・糞便等検査 | 各項目の点数、院内条件、他区分準用、尿沈渣とＤ０１７の主検査、染色加算、Ａ００２包括との接続 | [UrineFecalTests.lean](./Sanri/UrineFecalTests.lean) |
 | Ｄ００９〜Ｄ０２３－２ 検体検査の項目表 | 287行の名称・点数。枝番号と同一点数の別検査を識別 | [SpecimenCatalog.lean](./Sanri/SpecimenCatalog.lean) |
-| 同範囲の算定規則 | 複数項目包括、同一採血の上限、施設・患者条件、微生物加算、尿検査からの準用 | [SpecimenRules.lean](./Sanri/SpecimenRules.lean) |
+| 同範囲の算定規則 | 複数項目包括、同一採血の上限、施設・患者条件、微生物加算、尿検査からの準用、D012・D014の一部通知条件、D023(42)(43)の個別準用評価 | [SpecimenRules.lean](./Sanri/SpecimenRules.lean) |
 | 同範囲の検証例 | 包括・上限・欠落情報・施設条件・対象検査の違い等 | [SpecimenTestsChecks.lean](./Sanri/SpecimenTestsChecks.lean) |
-| Ｄ０２６ 検体検査判断料の外来分 | ７区分、区分別月１回、Ｄ０００除外、遺伝子検査への振分け、管理加算Ⅰ、骨髄像・免疫電気泳動法診断加算 | [SpecimenJudgment.lean](./Sanri/SpecimenJudgment.lean) |
+| Ｄ０２６ 検体検査判断料の外来分 | ７区分、区分別月１回、Ｄ０００除外、D004-3を含む遺伝子関連判断料への振分け、管理加算Ⅰ、骨髄像・免疫電気泳動法診断加算 | [SpecimenJudgment.lean](./Sanri/SpecimenJudgment.lean) |
 | 第３節 生体検査料通則１・２ | 年齢別100％・70％・40％加算、対象区分・構成項目の除外、遠隔置換との接続 | [PhysiologicalExaminations.lean](./Sanri/PhysiologicalExaminations.lean) |
 | 呼吸循環機能検査等通則、Ｄ２００〜Ｄ２１４－２ | 各検査、呼吸判断料、月内90％、心カテーテル固有加算、時間・記録数・同日／一連の包括 | [Cardiorespiratory.lean](./Sanri/Cardiorespiratory.lean) |
 | 超音波検査等通則、Ｄ２１５〜Ｄ２３４ | 超音波・骨塩定量・監視検査等、加算、時間・回数別点数、月／年／部位／一連の制限と包括 | [UltrasoundMonitoring.lean](./Sanri/UltrasoundMonitoring.lean) |

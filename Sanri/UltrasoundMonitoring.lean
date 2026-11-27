@@ -1,4 +1,5 @@
 import Sanri.Cardiorespiratory
+import Sanri.Logic
 
 namespace Sanri.MedicalFee.UltrasoundMonitoring
 
@@ -78,7 +79,22 @@ inductive CerebralPrincipal where
   | continuous | mapping
   deriving DecidableEq, Repr
 
+structure LaborMonitoringAssessment where
+  fetalDysfunction : Bool
+  laborDeviatesFromPhysiologicalCourse : Bool
+  augmentationToImproveCourse : Bool
+  deriving DecidableEq, Repr
+
+def d218Source : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0305第6号 別添1"
+  edition := "2026-10-07訂正"
+  location := "訂正PDF 2頁、登録版PDF 413頁 D218"
+  verification := .checkedAgainstSource
+}
+
 structure Context where
+  laborMonitoringAssessment : Option LaborMonitoringAssessment := none
   item : Item
   insuranceMedicalInstitution : Bool := true
   performed : Bool := true
@@ -185,10 +201,13 @@ def isClinic : Facility → Bool
   | .clinic => true
   | _ => false
 
-/-- 個別の月・年・部位・施設条件。日次重複や他項目への包括は別に記録する。 -/
+/-- 個別の月・年・部位・施設条件。D218は `d218Source` の「及び」を
+二つの事実の連言として読む。日次重複や他項目への包括は別に記録する。 -/
 def eligible (c : Context) : Bool :=
   c.insuranceMedicalInstitution && c.performed &&
   (!isHourly c.item || decide (c.durationMinutes > 0)) &&
+  (decide (c.item ≠ .laborMonitoring) || c.laborMonitoringAssessment.any (fun a =>
+    a.fetalDysfunction && a.laborDeviatesFromPhysiologicalCourse && a.augmentationToImproveCourse)) &&
   (decide (code c.item ≠ 220) || (c.observedEcgCurve && c.observedHeartRate && decide (c.monitoringDay > 0))) &&
   (decide (c.item ≠ .tomographyHomeVisit) || decide (c.limitedUltrasoundClaimsThisMonth < 1)) &&
   (decide (c.item ≠ .fetalEcho) || (c.facilityStandardNotified && decide (c.limitedUltrasoundClaimsThisMonth < 1))) &&
@@ -318,6 +337,7 @@ def assessBatch (contexts : List Context) : Option (List Assessment) := do
 
 inductive BundledService where
   | simultaneousRespiratoryCurve
+  | laborContractionCurve | laborFetalEcg | laborFetalHeartSound
   | recording | contrastInjection | anesthesiaOtherThanL008
   | simultaneousEcg | simultaneousPhonocardiogram | simultaneousPulseWave | simultaneousMechanocardiogram
   | respiratoryMonitoring | bloodGas | cardiacOutput | pulsePressure | fluoroscopy
@@ -328,6 +348,7 @@ inductive BundledService where
 /-- 包括される費用の根拠。false から別算定可とは判定しない。 -/
 def serviceIncluded (c : Context) (service : BundledService) : Bool :=
   match service with
+  | .laborContractionCurve | .laborFetalEcg | .laborFetalHeartSound => decide (c.item = .laborMonitoring)
   | .simultaneousRespiratoryCurve => decide (code c.item = 220)
   | .recording => decide ((code c.item = 215 ∧ suffix c.item = 0) ∨ c.item = .thermography)
   | .contrastInjection | .anesthesiaOtherThanL008 => c.contrastUsed && (isTomography c.item || isCardiacEcho c.item) ||
@@ -371,8 +392,15 @@ example : total { req .boneUltrasound with boneClaimsInYear := 1 } = none := by 
 example : total { req .boneUltrasound with boneClaimsInYear := 1, withinOneYearOfOsteoporosisTreatmentStart := true } = some 8000 := by decide
 example : total { req .boneUltrasound with withinOneYearOfOsteoporosisTreatmentStart := true, boneClaimsInFourMonthPeriod := 1 } = none := by decide
 example : batchTotal [req .dexaLumbar, req .boneUltrasound] = none := by decide
-example : (List.map (fun m => total { req .laborMonitoring with durationMinutes := m })
+private def labor : Context := {
+  item := .laborMonitoring
+  laborMonitoringAssessment := some ⟨true, true, true⟩
+}
+
+-- 時間境界の例には訂正後の適用条件を満たす事実を明示する。
+example : (List.map (fun m => total { labor with durationMinutes := m })
     [0, 60, 61, 90, 91]) = [none, some 51000, some 70000, some 70000, some 89000] := by decide
+example : total { req .laborMonitoring with durationMinutes := 60 } = none := by decide
 example : total { monitor with observedEcgCurve := false } = none := by decide
 example : total { monitor with observedHeartRate := false } = none := by decide
 example : (List.map (fun m => total { monitor with durationMinutes := m }) [60, 61, 180, 181]) =

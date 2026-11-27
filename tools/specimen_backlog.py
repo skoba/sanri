@@ -5,10 +5,15 @@ from collections import Counter, defaultdict
 from .fee_coverage import clause_paths
 from .fee_inventory import write_local
 from .fee_ledger import load_lean, read_index
-from .pdf_sources import NOTICE_SOURCE, PRIMARY_SOURCE, R08_AS_OF, require_source
+from .local_pdf import verified_pdf_pages
+from .notice_revisions import (amendment_counts, apply_amendments, effective_paragraph_records,
+                               load_revisions, revisions_for, specimen_corrections)
+from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, PRIMARY_SOURCE, R08_AS_OF, require_source
 
 
-def compare_clauses(fee: dict, notice: dict, rules: list[dict]) -> tuple[dict, dict]:
+def compare_clauses(fee: dict, notice: dict, rules: list[dict],
+                    revisions: dict | None = None, notice_pages: list[str] | None = None
+                    ) -> tuple[dict, dict]:
     paths = {path for rule in rules for path in clause_paths(rule)}
     expected = {"/".join(path) for path in paths if path[0] == "notice"}
     found = Counter()
@@ -46,21 +51,33 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict]) -> tuple[dict, d
         primary_unmatched = [entry["path"] for entry in entries if entry["path"] not in rules_here]
         primary_complete = heading["item_note_paths"] is not None
         blocks = by_code[chapter, code]
-        paragraphs = [paragraph for block in blocks for paragraph in block["paragraphs"]]
-        unmatched_notice = [p for p in paragraphs
-                            if p["number"] is None or
-                            f"notice/{code}/paragraph/{p['number']}" not in matches]
+        revision = revisions_for(code, revisions)
+        records, unresolved = apply_amendments(
+            [paragraph for block in blocks for paragraph in block["paragraphs"]], revision["amendments"])
+        for paragraph in records:
+            if notice_pages is not None and paragraph["status"] != "baseline":
+                paragraph["effective_records"] = effective_paragraph_records(paragraph, notice_pages)
+        paragraphs = [p for p in records if p["status"] != "deleted"]
+        unmatched_notice = [
+            p for p in paragraphs if p["status"] != "baseline" or p["number"] is None
+            or f"notice/{code}/paragraph/{p['number']}" not in matches
+        ]
+        unchanged_numbers = {str(p["number"]) for p in paragraphs if p["status"] == "baseline"}
         matched_branches = [key for key in check["matched"] if key.startswith(f"notice/{code}/")
-                            and key.count("/") == 4]
+                            and key.count("/") == 4 and key.split("/")[3] in unchanged_numbers]
         child_count = sum(len(p["children"]) for p in paragraphs)
+        revised_children = any(p["status"] != "baseline" for p in records)
         exact_primary = {entry["path"] for entry in entries} & rules_here
         primary_branches = sorted(rules_here & {
             child["path"] for note in heading["notes"] for child in note.get("children", [])
         })
         heading_matched = "heading" in rules_here
-        notice_status = "not_found" if not blocks else (
-            "needs_review" if len(blocks) > 1 or any(block["issues"] for block in blocks) else "indexed"
-        )
+        if unresolved or any("effective_records" in p and p["effective_records"] is None for p in records):
+            notice_status = "needs_review"
+        elif len(blocks) > 1 or any(block["issues"] for block in blocks):
+            notice_status = "needs_review"
+        else:
+            notice_status = "indexed" if blocks or records else "not_found"
         rows.append({
             "code": code, "section": heading["section"],
             "items": len(heading["items"]), "notes": len(heading["notes"]),
@@ -74,13 +91,16 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict]) -> tuple[dict, d
             "primary_branch_refs": primary_branches,
             "primary_other_refs": sorted(rules_here - exact_primary - set(primary_branches) - {"heading"}),
             "notice_status": notice_status,
-            "notice_paragraphs": len(paragraphs) if blocks else None,
-            "notice_numbered": sum(p["number"] is not None for p in paragraphs) if blocks else None,
+            "notice_paragraph_records": records,
+            "notice_amendments_unresolved": unresolved,
+            "future_notice_amendments": revision["future_amendments"],
+            "notice_paragraphs": len(paragraphs) if blocks or records else None,
+            "notice_numbered": sum(p["number"] is not None for p in paragraphs) if blocks or records else None,
             "notice_matched": len(paragraphs) - len(unmatched_notice),
-            "notice_unmatched": [{"number": p["number"], "start": p["start"]} for p in unmatched_notice],
+            "notice_unmatched": [{"number": p["number"], "start": p["start"], "status": p["status"]} for p in unmatched_notice],
             "notice_remaining": len(unmatched_notice) if notice_status == "indexed" else None,
-            "notice_children": child_count if blocks else None,
-            "notice_children_remaining": child_count - len(matched_branches) if notice_status == "indexed" else None,
+            "notice_children": child_count if blocks and not revised_children else None,
+            "notice_children_remaining": child_count - len(matched_branches) if notice_status == "indexed" and not revised_children else None,
             "notice_branch_refs": matched_branches,
         })
 
@@ -94,7 +114,10 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict]) -> tuple[dict, d
                 "notice_numbered", "notice_matched", "notice_remaining", "source_backed_clauses",
                 "notice_children", "notice_children_remaining"):
         summary[key] = sum(row[key] for row in rows if row[key] is not None)
-    return check, {"summary": summary, "rows": rows}
+    return check, {"summary": summary, "rows": rows,
+                   "revision_as_of": revisions["as_of"] if revisions is not None else None,
+                   "amended_notice_summary": amendment_counts(rows) if revisions is not None else None,
+                   "specimen_corrections": specimen_corrections(revisions) if revisions is not None else None}
 
 
 def add_question_counts(backlog: dict, questions: dict | None) -> None:
@@ -120,7 +143,9 @@ def main() -> None:
     require_source(notice["fee_source"], PRIMARY_SOURCE)
     if any(row["status"] == "listed" and "items" not in row for row in fee["rows"]):
         raise ValueError("本文索引を再生成してください")
-    check, backlog = compare_clauses(fee, notice, load_lean()["rules"])
+    revisions = load_revisions()
+    pages = verified_pdf_pages(NOTICE_PDF, NOTICE_SOURCE["sha256"]) if revisions is not None else None
+    check, backlog = compare_clauses(fee, notice, load_lean()["rules"], revisions, pages)
     try:
         questions = read_index("clarification-index.json")
     except FileNotFoundError:

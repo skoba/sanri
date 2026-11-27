@@ -1,5 +1,6 @@
 import Sanri.SpecimenCatalog
 import Sanri.UrineFecalTests
+import Sanri.Logic
 
 namespace Sanri.MedicalFee.SpecimenTests
 
@@ -15,7 +16,34 @@ inductive Surgery where
   | k898EtcWithinPart10Section11
   deriving DecidableEq, Repr
 
+inductive AquaporinMethod where
+  | elisa | cleia | other
+  deriving DecidableEq, Repr
+
+inductive AquaporinHistory where
+  | first
+  | repeatAfterNegative (changedFindings stronglySuspected diagnosisNeeded
+      priorDateRecorded necessityRecorded : Bool)
+  | other
+  deriving DecidableEq, Repr
+
+structure AquaporinAssessment where
+  method : AquaporinMethod
+  diagnosisPurpose : Bool
+  treatmentEffectAssessment : Bool
+  history : AquaporinHistory
+  deriving DecidableEq, Repr
+
+structure AspergillusAssessment where
+  elisa : Bool
+  suspectedChronicProgressivePulmonaryDisease : Bool
+  suspectedAllergicBronchopulmonaryDisease : Bool
+  guidelineFollowed : Bool
+  deriving DecidableEq, Repr
+
 structure Conditions where
+  aquaporin : Option AquaporinAssessment := none
+  aspergillus : Option AspergillusAssessment := none
   insuranceMedicalInstitution : Bool := true
   performed : Bool := true
   /-- 当該検査の注で要求される施設基準を満たす。 -/
@@ -70,7 +98,34 @@ inductive ItemResult where
   | missingSource (code : Code) (number branch : Nat)
   deriving DecidableEq, Repr
 
-/-- 注のある施設・患者・回数条件。点数の欠落とは区別して評価する。 -/
+def d012AspergillusSource : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0305第6号 別添1"
+  edition := "2026-05-01訂正"
+  location := "訂正PDF 7–8頁、登録版PDF 377頁 D012(52)"
+  verification := .checkedAgainstSource
+}
+
+def d014AquaporinSource : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0430第4号 別添2"
+  edition := "2026-05-18差替、2026-06-01適用"
+  location := "PDF 10頁 指示4 D014(26)"
+  verification := .checkedAgainstSource
+}
+
+/-- D014(26)。診断目的と検査歴を呼出元が確認する。 -/
+def AquaporinAssessment.eligible (a : AquaporinAssessment) : Bool :=
+  decide (a.method = .elisa ∨ a.method = .cleia) &&
+  a.diagnosisPurpose && !a.treatmentEffectAssessment &&
+  match a.history with
+  | .first => true
+  | .repeatAfterNegative changed suspected needed dateRecorded necessityRecorded =>
+    changed && suspected && needed && dateRecorded && necessityRecorded
+  | .other => false
+
+/-- 施設・患者・回数条件。D012の62とD014の46の第1種は
+`d012AspergillusSource` と `d014AquaporinSource` の範囲を評価する。 -/
 def eligible (r : Request) : Bool :=
   let c := r.conditions
   c.insuranceMedicalInstitution && c.performed &&
@@ -87,8 +142,12 @@ def eligible (r : Request) : Bool :=
   | .d011 => if r.number = 4 then decide (c.surgery ≠ .none) else true
   | .d012 =>
     if r.number = 56 ∧ r.variant < 2 then c.facilityStandardMet
-    else if r.number = 70 then c.facilityNotified else true
-  | .d014 => if r.number = 47 ∨ r.number = 49 then c.facilityNotified else true
+    else if r.number = 70 then c.facilityNotified
+    else if r.number = 62 then c.aspergillus.any (fun a => a.elisa && a.guidelineFollowed &&
+      (a.suspectedChronicProgressivePulmonaryDisease || a.suspectedAllergicBronchopulmonaryDisease))
+    else true
+  | .d014 => if r.number = 46 ∧ r.variant = 0 then c.aquaporin.any AquaporinAssessment.eligible
+    else if r.number = 47 ∨ r.number = 49 then c.facilityNotified else true
   | .d016 => if r.number = 7 then
       match r.branch with
       | 1 => decide (r.quantity = 1)
@@ -275,5 +334,114 @@ def assessUrineByReference (urine : UrineFecalTests.Context) (requests : List Re
 def executionItem (groups : List PricedGroup) (kind : Nat) : Examinations.SpecimenItem :=
   { kind := kind
     executionPoints := (groups.map PricedGroup.total).sum }
+
+def d023BkSource : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0529第2号 別添1"
+  edition := "2026-05-29発出、2026-06-01適用"
+  location := "PDF 3頁 指示4 D023(42)"
+  verification := .checkedAgainstSource
+}
+
+def d023MycobacteriaSource : Logic.SourceRef := {
+  kind := .notification
+  identifier := "保医発0930第2号 別添1"
+  edition := "2026-09-30発出、2026-10-01適用"
+  location := "PDF 2頁 指示2 D023(43)"
+  verification := .checkedAgainstSource
+}
+
+inductive BkIndication where
+  | suspectedNephropathy | suspectedHemorrhagicCystitis
+  | treatmentEffectAfterBkTreatmentStarted | activationDuringRejectionOrGvhdTreatment
+  deriving DecidableEq, Repr
+
+inductive BkSpecimen where
+  | plasma | urine | other
+  deriving DecidableEq, Repr
+
+structure BkRequest where
+  insuranceMedicalInstitution : Bool
+  performed : Bool
+  specimen : BkSpecimen
+  organOrHematopoieticCellTransplant : Bool
+  /-- (42)ア〜エの該当判断と摘要に記載した区分。 -/
+  indication : Option BkIndication
+  recordedIndication : Option BkIndication
+
+/-- D023(42)。準用は17の所定点数を参照する。 -/
+def bkReferencePoints (r : BkRequest) : Option Nat := do
+  let indication ← r.indication
+  if r.insuranceMedicalInstitution && r.performed && r.specimen != .other &&
+      r.organOrHematopoieticCellTransplant && r.recordedIndication == some indication then
+    (lookup .d023 17 0).bind (·.points)
+  else none
+
+inductive MycobacteriaSpecimen where
+  | sputum | culturedOrganism | other
+  deriving DecidableEq, Repr
+
+inductive MycobacteriaIndication where
+  | symptomaticAfterIntravesicalBcgNeedingDifferentiation
+  | suspectedPulmonaryTbAndNontuberculousDisease
+  deriving DecidableEq, Repr
+
+structure MycobacteriaRequest where
+  insuranceMedicalInstitution : Bool
+  performed : Bool
+  specimen : MycobacteriaSpecimen
+  dnaDetectionByPcrRsso : Bool
+  panelSize : Nat
+  /-- 同一患者の同じ一連の治療における本検査の既算定回数。 -/
+  claimsInTreatmentSeries : Nat
+  indication : Option MycobacteriaIndication
+  recordedIndication : Option MycobacteriaIndication
+  necessityRecorded : Bool
+  /-- (43)イの担当・常勤・経験年数等を照合した施設要件。 -/
+  staffingRequirementMet : Bool
+
+/-- D023(43)。25ロの所定点数を参照する。 -/
+def mycobacteriaReferencePoints (r : MycobacteriaRequest) : Option Nat := do
+  let indication ← r.indication
+  if r.insuranceMedicalInstitution && r.performed && r.specimen != .other &&
+      r.dnaDetectionByPcrRsso && decide (28 ≤ r.panelSize ∧ r.claimsInTreatmentSeries = 0) &&
+      r.recordedIndication == some indication && r.necessityRecorded && r.staffingRequirementMet then
+    (lookup .d023 25 2).bind (·.points)
+  else none
+
+example : bkReferencePoints {
+    insuranceMedicalInstitution := true, performed := true, specimen := .urine,
+    organOrHematopoieticCellTransplant := true, indication := some .suspectedNephropathy,
+    recordedIndication := some .suspectedNephropathy } = some 450 := by decide
+
+private def mycobacteriaSample : MycobacteriaRequest := {
+  insuranceMedicalInstitution := true, performed := true, specimen := .sputum,
+  dnaDetectionByPcrRsso := true, panelSize := 28, claimsInTreatmentSeries := 0,
+  indication := some .suspectedPulmonaryTbAndNontuberculousDisease,
+  recordedIndication := some .suspectedPulmonaryTbAndNontuberculousDisease,
+  necessityRecorded := true, staffingRequirementMet := true
+}
+
+example : mycobacteriaReferencePoints mycobacteriaSample = some 963 ∧
+    mycobacteriaReferencePoints { mycobacteriaSample with claimsInTreatmentSeries := 1 } = none := by decide
+
+example : assessOne {
+    code := .d012, number := 62, conditions := { aspergillus := some ⟨true, true, false, true⟩ }
+    } = some (.charged 390 0) := by decide
+
+example : assessOne { code := .d012, number := 62 } = none := by decide
+
+private def qualifyingAquaporin : AquaporinAssessment :=
+  { method := .cleia, diagnosisPurpose := true, treatmentEffectAssessment := false, history := .first }
+
+-- 登録版で列挙された測定法はELISA。差替通知はCLEIAを追加する。
+example : qualifyingAquaporin.method ≠ .elisa ∧
+    assessOne {
+      code := .d014, number := 46,
+      conditions := { aquaporin := some qualifyingAquaporin } } = some (.charged 1000 0) := by decide
+
+example : assessOne { code := .d014, number := 46, conditions := {
+    aquaporin := some { qualifyingAquaporin with
+      history := .repeatAfterNegative true true true false true } } } = none := by decide
 
 end Sanri.MedicalFee.SpecimenTests

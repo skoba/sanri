@@ -10,6 +10,7 @@ from .fee_inventory import CODE, normalized, write_local
 from .fee_ledger import load_lean, read_index
 from .local_pdf import verified_pdf_pages
 from .notice_inventory import build_notice
+from .notice_revisions import reviewed_correction, specimen_corrections
 from .pdf_sources import (CLARIFICATION_01_SHA256, LOCAL, NOTICE_PDF, NOTICE_SOURCE,
                           PRIMARY_SOURCE, R08_AS_OF, R08_DOWNLOADS, read_downloads, require_source)
 from .procedure_master import INDEX_COLUMNS
@@ -144,9 +145,10 @@ def amendment_rows(pages, source, attachment, effective, blocks, *, current_edit
                                  "を削る": "delete"}[match[3]], "lines": []}
             rows.append(row)
         elif row is not None:
-            row["lines"].append(raw)
+            row["lines"].append((page, line, raw))
     for row in rows:
-        lines = row.pop("lines")
+        records = row.pop("lines")
+        lines = [raw for _, _, raw in records]
         new_text = compact("".join(lines))
         marker = re.match(r"\((\d+)\)|([ァ-ヶ])(?=\s)|([0-9]+)(?=\s)", lines[0].strip()) if lines else None
         new_locator = marker[0] if marker else None
@@ -160,6 +162,27 @@ def amendment_rows(pages, source, attachment, effective, blocks, *, current_edit
                 row["paragraph"] = int(added[1])
         medical = current_edition and row["target_attachment"] == 1
         division_spans = blocks["division"].get(row["code"], []) if medical else []
+        if row["anchor"] == "" and row["operation"] == "change":
+            markers = [(index, match) for index, raw in enumerate(lines)
+                       if (match := PAREN.match(raw.strip()))]
+            if markers:
+                indent = min(len(lines[i]) - len(lines[i].lstrip()) for i, _ in markers)
+                starts = [(i, int(match[1])) for i, match in markers
+                          if len(lines[i]) - len(lines[i].lstrip()) == indent]
+                if starts[0][0] == 0 and [n for _, n in starts] == list(range(1, len(starts) + 1)):
+                    stops = [i for i, _ in starts[1:]] + [len(lines)]
+                    unnumbered = blocks["paragraph"].get((row["code"], None), [])
+                    row["replacement_paragraphs"] = []
+                    for (start, number), stop in zip(starts, stops):
+                        body = compact("".join(lines[start:stop]))
+                        row["replacement_paragraphs"].append({
+                            "number": number, "evidence": body,
+                            "page": records[start][0], "line": records[start][1],
+                            "records": [{"page": p, "line": ln, "text": raw}
+                                        for p, ln, raw in records[start:stop]],
+                            "replaces_unnumbered": any(text == PAREN.sub("", body)
+                                                       for _, _, text in unnumbered),
+                        })
         numbered = blocks["paragraph"].get((row["code"], row["paragraph"]), []) if medical else []
         candidates = numbered or division_spans
         hits = [(a, b) for a, b, body in candidates if new_text and new_text in body]
@@ -194,6 +217,16 @@ def amendment_rows(pages, source, attachment, effective, blocks, *, current_edit
                    baseline_candidate_pages=[[a, b] for a, b, _ in candidates],
                    baseline_match_pages=hits, baseline_reviewed_page=reviewed_page,
                    incorporation=status, confidence=confidence, basis=basis)
+        # 枝の追加位置（末尾）・置換範囲（両端）の登録版抽出行を原本で照合した。
+        branch_spans = {
+            ("2026-05-18", 1): (336, 8, 8),
+            ("2026-05-18", 2): (336, 38, 38),
+            ("2026-05-18", 3): (348, 28, 28),
+            ("2026-05-29", 3): (336, 31, 31),
+        }
+        if medical and (span := branch_spans.get((source["issued_on"], row["directive"]))):
+            row["baseline_branch_span"] = list(span)
+        row["records"] = [{"page": page, "line": line, "text": raw} for page, line, raw in records]
     return rows, [first, last]
 
 
@@ -204,14 +237,26 @@ def correction_rows(pages, source, blocks):
     result = []
     entry = None
     attachment = None
+    chapter = part = section = None
     for page, line, raw in numbered_lines(pages[first - 1:last], first):
         label = raw.strip()
         heading = re.match(rf"({CODE})(?:\s{{2,}}|$)", label)
         if annex := re.fullmatch(r"別添\s*(\d+)(?:の\s*(\d+))?", label):
             attachment = annex[1] + ("-" + annex[2] if annex[2] else "")
+        scope = re.match(r"^第\s*(\d+)\s*([章部節款])", label)
+        if scope:
+            number, level = int(scope[1]), scope[2]
+            if level == "章":
+                chapter, part, section = number, None, None
+            elif level == "部":
+                part, section = number, None
+            elif level == "節":
+                section = number
         if heading or re.match(r"^(?:別添\s*\d|第\s*\d+\s*[章部節款])", label):
             entry = {"code": heading[1] if heading else None, "heading": label,
                      "page": page, "line": line, "attachment": attachment, "lines": []}
+            if heading is None and chapter == 2 and part == 3 and section in (None, 1, 4):
+                entry["specimen_scope_candidate"] = True
             result.append(entry)
         elif entry is not None:
             entry["lines"].append(label)
@@ -243,7 +288,7 @@ def correction_rows(pages, source, blocks):
                      incorporation=status, confidence=confidence, basis=basis,
                      evidence=lines, document=source["path"], issued_on=source["issued_on"],
                      operation="correction")
-    return result, [first, last]
+    return [reviewed_correction(row) for row in result], [first, last]
 
 
 def facility_index(pages):
@@ -357,6 +402,7 @@ def main():
                   if not doc["superseded"] and doc["effective_from"] <= AS_OF]
     to_apply = [doc["source"]["path"] for doc in applicable
                 if any(row["incorporation"] == "absent" for row in doc["changes"])]
+    report["specimen_corrections"] = specimen_corrections(report)
     report["as_of_conclusion"] = {
         "baseline_alone_sufficient": False if to_apply else None,
         "amendments_to_apply": to_apply,
@@ -383,28 +429,31 @@ def impact(report, blocks, specimens):
     legacy_evidence = {
         ("2026-04-02", "D026", 6): {
             "definition": "Sanri/SpecimenJudgment.lean:geneRouting",
-            "status": "confirmed_gap", "related_division": "D004-3",
-            "reason": "登録版の振分け先を確認。旧来の固定判定にはD004-3の分岐がない。",
+            "status": "implemented", "related_division": "D004-3",
         },
         ("2026-05-01", "D012", 52): {
             "definition": "Sanri/SpecimenRules.lean:eligible", "item": 62,
-            "status": "condition_not_encoded",
+            "status": "implemented",
         },
         ("2026-05-18", "D014", 26): {
             "definition": "Sanri/SpecimenRules.lean:eligible", "item": 46,
-            "status": "condition_not_encoded",
+            "status": "implemented",
         },
         ("2026-05-29", "D023", 42): {
-            "definition": "Sanri/SpecimenRules.lean:eligible", "item": 17,
-            "status": "reference_candidate_for_review",
+            "definition": "Sanri/SpecimenRules.lean:bkReferencePoints", "item": 17,
+            "status": "implemented_as_separate_reference",
         },
         ("2026-09-30", "D023", 43): {
-            "definition": "Sanri/SpecimenRules.lean:eligible", "item": 25,
-            "status": "reference_candidate_for_review",
+            "definition": "Sanri/SpecimenRules.lean:mycobacteriaReferencePoints", "item": 25,
+            "status": "implemented_as_separate_reference",
+        },
+        ("2026-05-29", "A001", 8): {
+            "definition": "Sanri/RevisitConsultation.lean:additionBreakdown",
+            "status": "implemented_for_transitional_time_additions",
         },
         ("2026-10-07", "D218", None): {
             "definition": "Sanri/UltrasoundMonitoring.lean:eligible",
-            "status": "condition_not_encoded",
+            "status": "implemented",
         },
     }
     affected = []
@@ -459,11 +508,18 @@ def impact(report, blocks, specimens):
                         baseline.append({"paragraph": 4, "pages": [a, b], "origin": "baseline_probable"})
             status = ("amendment_item" if len(candidates) == 1 else
                       "baseline_item_candidate" if len(baseline) == 1 else "item_and_origin_unresolved")
+            reviewed_origin = (len(candidates) == 1 and code == "D023" and
+                               (candidates[0]["issued_on"], candidates[0]["paragraph"]) in {
+                                   ("2026-05-29", 42), ("2026-09-30", 43),
+                               })
             references.append({"master": master, "amendment_candidates": candidates,
+                               "notice_reference_reviewed": reviewed_origin,
                                "baseline_item_candidates": baseline, "status": status})
     return {"as_of": AS_OF, "affected_candidates": affected, "references": references,
             "exact_notice_rule_ids": sorted({rule for row in affected for rule in row["rule_ids"]}),
-            "reference_counts": dict(Counter(row["status"] for row in references))}
+            "reference_counts": dict(Counter(row["status"] for row in references)),
+            "reference_counts_as_of": dict(Counter(row["status"] for row in references
+                                                   if row["master"]["基準日に使用可能"] == "1"))}
 
 
 if __name__ == "__main__":
