@@ -65,7 +65,7 @@ def amendment_branch_matches(paragraph: dict, identifier: str, rules_by_path: di
 def nested_notice_paths(child: dict, identifier: str, pages: list[str]) -> list[str]:
     """登録版のカナ枝内にある括弧付きカナと丸数字を位置範囲内で照合する。"""
     nested_kana = {**KANA, "ロ": "ro", "リ": "ri", "ル": "ru", "ヲ": "wo", "ワ": "wa",
-                   "ヨ": "yo", "レ": "re", "へ": "he"}
+                   "ヨ": "yo", "レ": "re", "へ": "he", "二": "ni"}
     paths = []
     parent = identifier
     start, end = child["start"], child["end"]
@@ -74,7 +74,7 @@ def nested_notice_paths(child: dict, identifier: str, pages: list[str]) -> list[
             if (page, line) <= (start["page"], start["line"]) or (page, line) > (end["page"], end["line"]):
                 continue
             label = raw.lstrip()
-            kana = re.match(r"[（(]([ァ-ヶへ])[）)]\s+", label)
+            kana = re.match(r"[（(]([ァ-ヶへ二])[）)]\s+", label)
             ordinal = re.match(r"([①-⑳])\s+", label)
             if kana and kana[1] in nested_kana:
                 parent = f"{identifier}/{nested_kana[kana[1]]}"

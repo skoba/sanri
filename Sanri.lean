@@ -40,6 +40,11 @@ import Sanri.D009
 import Sanri.D010
 import Sanri.D011
 import Sanri.D012
+import Sanri.D013
+import Sanri.D014
+import Sanri.D015
+import Sanri.D016
+import Sanri.D017
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring

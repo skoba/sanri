@@ -1,3 +1,4 @@
+import Sanri.SpecimenCollection
 import Sanri.History
 import Sanri.BloodChemistryLate
 import Sanri.BloodChemistryAdditional
@@ -6,6 +7,21 @@ import Sanri.CaseStudies.OutpatientBloodTests
 
 /-! 既存の外来規則に渡す履歴の射影。各月次算定履歴から今回の算定候補を除いて渡す。 -/
 namespace Sanri.MedicalFee
+
+namespace SpecimenCollection
+
+/-- 実施料の採血群と、別に確認したD400の採取記録を接続する。
+D400の日内既算定・血液回路等の確認は既存の採取料評価へ渡す。 -/
+def attachBloodDraw (test draw : History.Performance Unit) (collection : Context)
+    (kind : Nat) (day : Examinations.DailyContext) :
+    Option (Examinations.DailyContext × Assessment) := do
+  if test.sameDraw draw != some true || collection.inpatient || !isD400 collection.item then none
+  else
+    let assessment ← assess collection
+    let charge := (assessment.toCollection kind).toList
+    return ({ day with collections := day.collections ++ charge }, assessment)
+
+end SpecimenCollection
 
 namespace BloodChemistry
 

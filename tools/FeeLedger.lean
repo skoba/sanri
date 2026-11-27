@@ -24,9 +24,10 @@ private def arguments (arg : Expr) : MetaM (List Expr) := do
 private unsafe def ruleRow (module name : String) (rule : Expr) : MetaM Json := do
   let id ← whnf (mkProj ``Rule 0 rule)
   let source ← whnf (mkProj ``Rule 1 rule)
+  let parameterized := source.hasFVar || id.hasFVar
   let id ← if id.hasFVar then pure "" else evalExpr String (mkConst ``String) id
   let fields := [("module", module), ("definition", name), ("id", id)]
-  if source.hasFVar then
+  if parameterized then
     return Json.mkObj ((fields ++ [("classification", "parameterized")]).map
       (fun (key, value) => (key, toJson value)) ++
       ["kind", "identifier", "edition", "location", "verification", "url"].map (·, Json.null))
@@ -128,7 +129,8 @@ private unsafe def points : MetaM (List Json) := do
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
   let specimens := (SpecimenTests.catalog.filter fun e => e.code != .d009 && e.code != .d010 && e.code != .d011 &&
-      e.code != .d012).flatMap fun entry =>
+      e.code != .d012 && e.code != .d013 && e.code != .d014 && e.code != .d015 &&
+      e.code != .d016 && e.code != .d017).flatMap fun entry =>
     let code := (reprStr entry.code |>.splitOn "." |>.getLast! |>.toUpper).replace "_" "-"
     entry.variants.map fun item => pointRow code item "base" entry.number entry.branch entry.points
   let markers := (List.finRange 36).map fun slot =>
@@ -147,6 +149,22 @@ private unsafe def points : MetaM (List Json) := do
     (some D012.viralCapPoints)
   let infectionClassCap := pointRow "D012" "classCap" "note" 46 0
     (some D012.classCapPoints)
+  let hepatitis := D013.ledgerItems.map fun i =>
+    pointRow "D013" (reprStr i) "base" i.number 0 (some i.points)
+  let hepatitisNotes := [(3, D013.threeItemPoints), (4, D013.fourItemPoints), (5, D013.fiveOrMorePoints)].map fun (n, p) =>
+    pointRow "D013" ("bundle/" ++ toString n) "note" 0 0 (some p)
+  let autoantibodies := D014.ledgerItems.map fun i =>
+    pointRow "D014" (reprStr i) "base" i.number 0 (some i.points)
+  let autoantibodyNotes := [(2, D014.twoItemPoints), (3, D014.threeOrMorePoints)].map fun (n, p) =>
+    pointRow "D014" ("bundle/" ++ toString n) "note" 0 0 (some p)
+  let plasmaProteins := D015.ledgerItems.map fun i =>
+    pointRow "D015" (reprStr i) "base" i.number 0 (some i.points)
+  let igeCap := pointRow "D015" "specificIgeCap" "note" 13 0 (some D015.igeCapPoints)
+  let cellular := D016.ledgerItems.map fun i =>
+    pointRow "D016" (reprStr i) "base" i.number i.branch (some i.points)
+  let bacterialMicroscopy := D017.ledgerItems.map fun i =>
+    pointRow "D017" (reprStr i) "base" i.number 0 (some i.points)
+  let smear := pointRow "D017" "concentrationSmear" "note" 1 0 (some D017.smearPoints)
   let puncture := D004.ledgerItems.map fun item =>
     let price := item.fixedPoints
     pointRow "D004" (reprStr item |>.splitOn "." |>.getLast!)
@@ -242,7 +260,9 @@ private unsafe def points : MetaM (List Json) := do
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
     brca ++ profiling ++ targeted ++ plasmaPanel ++ plasmaBundles ++ lateGenetic ++
-    endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap, infectionClassCap] ++ specimens
+    endocrine ++ endocrineBundle ++ markers ++ markerBundle ++ special ++ immuneBlood ++ infection ++ [infectionCap, infectionClassCap] ++
+    hepatitis ++ hepatitisNotes ++ autoantibodies ++ autoantibodyNotes ++ plasmaProteins ++ [igeCap] ++
+    cellular ++ bacterialMicroscopy ++ [smear] ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

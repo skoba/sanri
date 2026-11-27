@@ -199,6 +199,13 @@ example : (applyD023References [(1, bkSample)]
 
 example : (applyD023References [(1, bkSample), (1, bkSample)] {} {}).isNone = true := by decide
 
+example : (do
+    let assessed ← applyD023References [(1, bkSample)]
+      { tests := [{ major := 13, number := 4, ordinaryCategory := .immunological }] }
+      { items := [{ kind := 13, executionPoints := 98 }] }
+    let execution ← Examinations.executionPoints assessed
+    pure (execution, assessed.judgmentPoints)) = some (548, 294) := by decide
+
 private def urine : Test :=
   { major := 1, ordinaryCategory := .urineFecal }
 private def gene (suffix : Nat) : Test :=

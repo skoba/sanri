@@ -109,8 +109,9 @@ def d012AspergillusSource : Logic.SourceRef := {
 def d014AquaporinSource : Logic.SourceRef := {
   kind := .notification
   identifier := "保医発0430第4号 別添2"
-  edition := "2026-05-18差替、2026-06-01適用"
-  location := "PDF 10頁 指示4 D014(26)"
+  edition := "2026-06-01適用"
+  location := "2026-05-18差替版 PDF 10頁 指示4 D014(26)"
+  url := some "https://kouseikyoku.mhlw.go.jp/kantoshinetsu/080525_016.pdf"
   verification := .checkedAgainstSource
 }
 
