@@ -128,7 +128,7 @@ private unsafe def points : MetaM (List Json) := do
       let kind := if ctor == ``D007.ScopedItem.urinarySulfatedBileAcids then "reference" else "base"
       chemistry := pointRow "D007" label kind number 0 price :: chemistry
   let specimens := (SpecimenTests.catalog.filter fun e => e.code != .d009 && e.code != .d010 && e.code != .d011 &&
-      !(e.code = .d012 && (e.number ≤ 15 || e.number = 62))).flatMap fun entry =>
+      !(e.code = .d012 && (e.number ≤ 21 || e.number = 62))).flatMap fun entry =>
     let code := (reprStr entry.code |>.splitOn "." |>.getLast! |>.toUpper).replace "_" "-"
     entry.variants.map fun item => pointRow code item "base" entry.number entry.branch entry.points
   let markers := (List.finRange 36).map fun slot =>

@@ -6,7 +6,7 @@ namespace Sanri.MedicalFee.D012
 
 open Sanri.Logic Sanri.History
 
-/-- 基準診療日2026-10-22の外来。第1〜15項と第62項の検査種類。 -/
+/-- 基準診療日2026-10-22の外来。第1〜21項と第62項の検査種類。 -/
 inductive Item where
   | stsQual | asoQual | asoSemi | asoQuant
   | toxoplasmaQual | toxoplasmaSemi
@@ -21,6 +21,12 @@ inductive Item where
   | viralTiter
   | pyloriAntibody | pertussisQual | pertussisSemi
   | htlvQual | htlvSemi | toxoplasmaAntibody | toxoplasmaIgM | difficileAntigen
+  | hiv12Qual | hiv12Semi | hiv12ComboQual
+  | hiv1Antibody
+  | rapidGroupAStrep
+  | hiv12Quant
+  | hibAntigen
+  | hiv12ComboQuant
   | aspergillusIgG
   deriving DecidableEq
 
@@ -40,6 +46,12 @@ def Item.number : Item → Nat
   | .htlvQual | .htlvSemi => 13
   | .toxoplasmaAntibody => 14
   | .toxoplasmaIgM | .difficileAntigen => 15
+  | .hiv12Qual | .hiv12Semi | .hiv12ComboQual => 16
+  | .hiv1Antibody => 17
+  | .rapidGroupAStrep => 18
+  | .hiv12Quant => 19
+  | .hibAntigen => 20
+  | .hiv12ComboQuant => 21
   | .aspergillusIgG => 62
 
 def Item.points : Item → Nat
@@ -58,9 +70,17 @@ def Item.points : Item → Nat
   | .htlvQual | .htlvSemi => 85
   | .toxoplasmaAntibody => 93
   | .toxoplasmaIgM | .difficileAntigen => 95
+  | .hiv12Qual | .hiv12Semi | .hiv12ComboQual => 109
+  | .hiv1Antibody => 113
+  | .rapidGroupAStrep => 121
+  | .hiv12Quant => 124
+  | .hibAntigen => 126
+  | .hiv12ComboQuant => 127
   | .aspergillusIgG => 390
 
 def Item.variant : Item → Nat
+  | .hiv12Semi => 1
+  | .hiv12ComboQual => 2
   | .asoQual | .toxoplasmaSemi | .askSemi | .mycoplasmaQual | .stsQuant | .treponemaQuant | .urease | .stoolRotavirusQuant | .pneumoniaeIgG | .pertussisQual | .htlvSemi | .difficileAntigen => 1
   | .asoSemi | .mycoplasmaSemi | .pertussisSemi => 2
   | .asoQuant => 3
@@ -79,7 +99,9 @@ def ledgerItems : List Item :=
     .pneumoniaeIgA,
     .viralTiter,
     .pyloriAntibody, .pertussisQual, .pertussisSemi, .htlvQual, .htlvSemi,
-    .toxoplasmaAntibody, .toxoplasmaIgM, .difficileAntigen, .aspergillusIgG]
+    .toxoplasmaAntibody, .toxoplasmaIgM, .difficileAntigen,
+    .hiv12Qual, .hiv12Semi, .hiv12ComboQual, .hiv1Antibody, .rapidGroupAStrep,
+    .hiv12Quant, .hibAntigen, .hiv12ComboQuant, .aspergillusIgG]
 
 private def primary (page : Nat) (loc : String) : SourceRef :=
   ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "令和8年度・2026-06-01適用",
@@ -93,7 +115,8 @@ private def notice (pages loc : String) : SourceRef :=
 
 def itemRule (i : Item) : Rule Item Nat :=
   let n := toString i.number
-  ⟨"primary/D012/item/" ++ n, primary (if i = .aspergillusIgG then 186 else 184) n,
+  let page := if i.number ≤ 18 then 184 else if i.number ≤ 21 then 185 else 186
+  ⟨"primary/D012/item/" ++ n, primary page n,
     fun candidate p => candidate = i → p = i.points⟩
 
 def rules : List (Rule Item Nat) := ledgerItems.map itemRule
@@ -117,6 +140,7 @@ inductive Target where
 
 inductive RelatedTest where
   | local (item : Item)
+  | bacterialCultureD018
   | mycoplasma27 | mycoplasma38 | pneumoniaeIgM30
   | influenzaAntigen22 | metapneumovirus25 | rsAntigen24 | classSpecific46 | toxoplasmaAvidity64
   deriving DecidableEq
@@ -132,6 +156,44 @@ structure Combined where
   selected : Option (List Nat) := none
   viralTarget : Nat → Option Target := fun _ => none
 
+inductive HivMethod where
+  | la | eia | pa | immunochromatography | other
+  deriving DecidableEq
+
+inductive HistoricalBleeding where
+  | neonatalOrSimilar | severeLiverDisease | digestiveDisease | surgeryOrDelivery
+  deriving DecidableEq
+
+inductive HivIndication where
+  | documentedUnheatedFactor
+  | undocumentedFactor (inpatientYear : Nat) (bleeding : HistoricalBleeding)
+  | suspectedWithDifferentialDisease
+  | suspectedWithAssociatedSexuallyTransmittedInfection
+  deriving DecidableEq
+
+inductive TransfusionKind where
+  | k920NonAutologous | plasmaProduct
+  deriving DecidableEq
+
+/-- 他機関の一連も識別する。算定履歴のキーには実施元機関も含める。 -/
+structure TransfusionSeries where
+  patient : Nat
+  provider : Nat
+  seriesId : Nat
+  finalDay : Date
+  kind : TransfusionKind
+
+structure HivFollowUp where
+  series : TransfusionSeries
+  /-- 最終日から概ね2か月後に該当することを確認した外部判断。 -/
+  approximatelyTwoMonths : Bool
+  /-- 候補を除き、同じ一連に対する既算定を全機関について確認する。 -/
+  history : ClaimHistory (Nat × Nat)
+
+inductive HivRoute where
+  | clinical (indication : HivIndication)
+  | transfusion (followUp : HivFollowUp)
+
 structure Context where
   performance : Performance RelatedTest
   /-- 確認済みの併施なしは候補実施だけの群とする。同時実施には別途同時IDを使う。 -/
@@ -144,6 +206,10 @@ structure Context where
   pyloriNoticeSatisfied : Option Bool := none
   treatmentNecessity : Option Bool := none
   particleAgglutination : Option Bool := none
+  hivRoute : Option HivRoute := none
+  /-- 当該機関での採血を保健所に委託した検査に該当するか。 -/
+  hivHealthCenterOutsourcing : Option Bool := none
+  hivMethod : Option HivMethod := none
   aspergillus : Option SpecimenTests.AspergillusAssessment := none
 
 private def condition (id pages paragraph : String) (holds : Context → Prop) :
@@ -312,10 +378,81 @@ def toxoplasmaChoice : Rule Context Unit :=
             q.item == .local .toxoplasmaAntibody || q.item == .toxoplasmaAvidity64)
           c.performance 1)
 
+def isHivScreening : RelatedTest → Bool
+  | .local .hiv12Qual | .local .hiv12Semi | .local .hiv12ComboQual
+  | .local .hiv1Antibody | .local .hiv12Quant | .local .hiv12ComboQuant => true
+  | _ => false
+
+private def HivFollowUp.Valid (f : HivFollowUp) (site : Site) : Prop :=
+  f.series.patient = site.patient ∧
+    ∃ period : Period, period.first = f.series.finalDay ∧ period.last = site.date ∧
+      f.approximatelyTwoMonths = true ∧
+      withinLimit f.history ⟨site.patient, none, period⟩
+        (· == (f.series.provider, f.series.seriesId)) 0 = some true
+
+def hivClinicalRule : Rule Context Unit :=
+  condition "9" "371" "9" fun c =>
+    isHivScreening c.performance.item = true →
+      c.hivRoute.isSome = true ∧
+      ∀ indication, c.hivRoute = some (.clinical indication) →
+        c.hivHealthCenterOutsourcing = some false
+
+private def historicalBranch (id label : String) (b : HistoricalBleeding) : Rule Context Unit :=
+  condition id "371" label fun c =>
+    ∀ year, isHivScreening c.performance.item = true →
+      c.hivRoute = some (.clinical (.undocumentedFactor year b)) →
+      1978 ≤ year ∧ year ≤ 1988
+
+def hivNeonatalRule := historicalBranch "9/a" "9 ア" .neonatalOrSimilar
+def hivLiverRule := historicalBranch "9/i" "9 イ" .severeLiverDisease
+def hivDigestiveRule := historicalBranch "9/u" "9 ウ" .digestiveDisease
+def hivSurgeryRule := historicalBranch "9/e" "9 エ" .surgeryOrDelivery
+
+def hivFollowUpRule : Rule Context Unit :=
+  condition "10/a" "371–372" "10 ア" fun c =>
+    isHivScreening c.performance.item = true →
+    ∀ f, c.hivRoute = some (.transfusion f) → f.series.provider = c.performance.site.institution →
+      f.Valid c.performance.site
+
+def hivOtherInstitutionRule : Rule Context Unit :=
+  condition "10/i" "372" "10 イ" fun c =>
+    isHivScreening c.performance.item = true →
+    ∀ f, c.hivRoute = some (.transfusion f) → f.series.provider ≠ c.performance.site.institution →
+      f.Valid c.performance.site
+
+def hivTransfusionRule : Rule Context Unit :=
+  condition "10" "371–372" "10" fun c =>
+    hivFollowUpRule.holds c () ∧ hivOtherInstitutionRule.holds c ()
+
+def hivFinalDayEntry : Rule Context (Option Date) :=
+  ⟨"notice/D012/paragraph/10/u", notice "372" "10 ウ", fun c entry =>
+    isHivScreening c.performance.item = true →
+    ∀ f, c.hivRoute = some (.transfusion f) → entry = some f.series.finalDay⟩
+
+def hivMethodRule : Rule Context Unit :=
+  condition "11" "372" "11" fun c =>
+    c.performance.item ∈ [RelatedTest.local .hiv12Qual, .local .hiv12Semi, .local .hiv12Quant] →
+      c.hivMethod ∈ [some .la, some .eia, some .pa, some .immunochromatography]
+
+/-- D018側との照合入力。陰性を受けた後続検査かどうかは実施記録で確認する。 -/
+structure StrepCulture where
+  rapid : Performance RelatedTest
+  culture : Performance RelatedTest
+  followedNegativeRapid : Option Bool
+
+def strepCultureRule : Rule StrepCulture Bool :=
+  ⟨"notice/D012/paragraph/12", notice "372" "12", fun c separate =>
+    c.rapid.item = .local .rapidGroupAStrep → c.culture.item = .bacterialCultureD018 →
+    c.rapid.site.patient = c.culture.site.patient →
+    c.rapid.site.institution = c.culture.site.institution → separate = true →
+      c.rapid.simultaneousWith c.culture = some false ∧ c.followedNegativeRapid = some false⟩
+
 def eligibilityRules :=
   [stsRule, mycoplasmaAntibodyRule, ureaseRule, stoolAntigenRule, pyloriRule,
     pyloriMethodRule, pyloriReferenceRule, viralParagraph, viralIndication, pyloriAntibodyRule, htlvRule,
     influenzaChoice, metapneumovirusChoice, mycoplasmaChromatographyRule, pneumoniaeChoice,
+    hivClinicalRule, hivNeonatalRule, hivLiverRule, hivDigestiveRule, hivSurgeryRule,
+    hivTransfusionRule, hivFollowUpRule, hivOtherInstitutionRule, hivMethodRule,
     mycoplasmaFluorescenceRule, viralClassChoice, aspergillusRule, toxoplasmaChoice]
 
 def Eligible (c : Context) : Prop := Satisfies eligibilityRules c ()
@@ -435,12 +572,71 @@ example : PermitsRate .aspergillusIgG aspergillusSample 390 := by
     mycoplasmaAntibodyRule, mycoplasmaChromatographyRule, mycoplasmaFluorescenceRule,
     mycoplasmaSelection, isMycoplasma, ureaseRule, stoolAntigenRule, isRotavirus, pyloriRule,
     pyloriMethodRule, pyloriReferenceRule, viralParagraph, viralIndication, pyloriAntibodyRule, htlvRule, influenzaChoice,
-    pneumoniaeChoice, metapneumovirusChoice, viralClassChoice, aspergillusRule, toxoplasmaChoice, aspergillusSample, sample]
+    pneumoniaeChoice, metapneumovirusChoice, viralClassChoice, aspergillusRule, toxoplasmaChoice, hivClinicalRule, hivNeonatalRule, hivLiverRule, hivDigestiveRule,
+    hivSurgeryRule, historicalBranch, hivTransfusionRule, hivFollowUpRule, hivOtherInstitutionRule,
+    hivMethodRule, isHivScreening, aspergillusSample, sample]
 
 example : ¬ Eligible (sample .aspergillusIgG) := by
   intro h
   obtain ⟨a, ha, _⟩ := h aspergillusRule (by simp [eligibilityRules]) rfl
   cases ha
+
+private def hivSample : Context :=
+  { sample .hiv12Qual with
+    hivRoute := some (.clinical (.undocumentedFactor 1978 .neonatalOrSimilar))
+    hivHealthCenterOutsourcing := some false
+    hivMethod := some .pa }
+
+example : PermitsRate .hiv12Qual hivSample 109 := by
+  refine ⟨rfl, ?_, (rate_iff ..).mpr rfl⟩
+  simp [Eligible, eligibilityRules, satisfies_cons, satisfies_nil, condition, stsRule,
+    mycoplasmaAntibodyRule, mycoplasmaChromatographyRule, mycoplasmaFluorescenceRule,
+    mycoplasmaSelection, isMycoplasma, ureaseRule, stoolAntigenRule, isRotavirus, pyloriRule,
+    pyloriMethodRule, pyloriReferenceRule, viralParagraph, viralIndication, pyloriAntibodyRule,
+    htlvRule, influenzaChoice, pneumoniaeChoice, metapneumovirusChoice, viralClassChoice,
+    aspergillusRule, toxoplasmaChoice, hivClinicalRule, hivNeonatalRule, hivLiverRule,
+    hivDigestiveRule, hivSurgeryRule, historicalBranch, hivTransfusionRule, hivFollowUpRule,
+    hivOtherInstitutionRule, hivMethodRule, isHivScreening, hivSample, sample]
+
+example : ¬ Eligible
+    { hivSample with hivRoute := some (.clinical (.undocumentedFactor 1977 .neonatalOrSimilar)) } := by
+  intro h
+  have year := h hivNeonatalRule (by simp [eligibilityRules]) 1977 rfl rfl
+  omega
+
+private def followUpPeriod : Period :=
+  ⟨⟨⟨2026, 7⟩, ⟨22, by decide⟩⟩, hivSample.performance.site.date, by decide⟩
+
+private def followUpSample : HivFollowUp :=
+  { series := ⟨2, 4, 1, followUpPeriod.first, .plasmaProduct⟩
+    approximatelyTwoMonths := true
+    history := ⟨⟨⟨2, none, followUpPeriod⟩, []⟩, by simp⟩ }
+
+private def transfusionSample : Context :=
+  { hivSample with hivRoute := some (.transfusion followUpSample) }
+
+example : hivOtherInstitutionRule.holds transfusionSample () := by
+  intro _ f hf _
+  have eq : followUpSample = f := by
+    simpa [transfusionSample] using hf
+  subst f
+  exact ⟨rfl, followUpPeriod, rfl, rfl, rfl, by decide⟩
+
+example : hivFinalDayEntry.holds transfusionSample (some followUpPeriod.first) := by
+  intro _ f hf
+  have eq : followUpSample = f := by
+    simpa [transfusionSample] using hf
+  subst f
+  rfl
+
+private def strepCultureSample : StrepCulture :=
+  let rapid := { (sample .rapidGroupAStrep).performance with simultaneous := some 1 }
+  ⟨rapid, { rapid with id := 2, item := .bacterialCultureD018 }, some false⟩
+
+example : ¬ strepCultureRule.holds strepCultureSample true := by
+  intro h
+  have bad := (h rfl rfl rfl rfl rfl).1
+  contradiction
 
 private def titer (id : Nat) (target : Target) : Context × Target :=
   let p := { (sample .viralTiter).performance with id := id }
@@ -463,7 +659,9 @@ example : nineTargetGroup.Assessed := by
     isMycoplasma, ureaseRule, stoolAntigenRule, isRotavirus, pyloriRule, pyloriMethodRule,
     pyloriReferenceRule, viralParagraph, viralIndication, pyloriAntibodyRule, htlvRule,
     influenzaChoice, metapneumovirusChoice, isFluTarget, pneumoniaeChoice, viralClassChoice,
-    aspergillusRule, toxoplasmaChoice, Combined.Valid, Performance.sameSpecimen, Performance.sameGroup]
+    aspergillusRule, toxoplasmaChoice, hivClinicalRule, hivNeonatalRule, hivLiverRule, hivDigestiveRule,
+    hivSurgeryRule, historicalBranch, hivTransfusionRule, hivFollowUpRule, hivOtherInstitutionRule,
+    hivMethodRule, isHivScreening, Combined.Valid, Performance.sameSpecimen, Performance.sameGroup]
 
 example : Satisfies viralRules nineTargetGroup 632 :=
   (viral_legacy_iff ..).mpr rfl
