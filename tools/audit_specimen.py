@@ -17,7 +17,7 @@ from .fee_ledger import INVENTORY, compare_points, load_lean, read_index
 from .local_pdf import verified_pdf_pages
 from .pdf_sources import NOTICE_PDF, NOTICE_SOURCE, R08_DOWNLOADS
 from .r08_inventory import compact, notice_spans
-from .specimen_audit_groups import group_inventory
+from .specimen_audit_groups import METHOD_BUNDLES, group_inventory
 from .procedure_master import (
     ARCHIVE_SHA256, INDEX_COLUMNS, LOCAL, _write, index_rows,
     load_registered, require,
@@ -123,6 +123,18 @@ def reference_rate_projection(record, by_key, evidence):
     return None
 
 
+def reviewed_alternatives(candidates, review, price):
+    """合成・選択行の同額候補を保持する。候補の採否や検査種類を確定しない。"""
+    if not review:
+        return None
+    items = review["items"]
+    points = [p for p in candidates if item_key(p)[1] in items and p["points"] == price]
+    require(len(items) >= 2 and len(points) == len(items)
+            and {item_key(p)[1] for p in points} == set(items),
+            "検査種類の候補の点数又は項が名称レビューと異なる")
+    return {**review, "points": points}
+
+
 def correspondence(record, by_key, reviewed_names=None):
     kind = code_kind(record)
     number = NOTE_NUMBERS.get((record.division, record.item), record.item) if kind == "note" else record.item
@@ -204,10 +216,20 @@ def judgment_projection(point):
     return None
 
 
+# 告示と既存Leanの対象項目に、仕様書の第16列の番号を対応させる。
 def bundle_projection(point):
     division, number = point["division"], point["number"]
+    item = item_key(point)[1]
+    if (division, item) == ("D001", "stripProteinCreatinineRatio"):
+        return 1
+    if (division, item) == ("D006-12", "plasmaEgfr"):
+        return 15
     if point["kind"] != "base":
         return None
+    if division == "D004-2":
+        return {"drugAid": 13, "otherSimple": 13, "complex": 14}.get(item, 0)
+    if division == "D006-27":
+        return 16 if item in {"metEx14", "ntrk", "lungHer2"} else 15
     if division == "D006":
         return 6 if 14 <= number <= 34 else 0
     if division == "D007":
@@ -215,7 +237,9 @@ def bundle_projection(point):
     if division == "D008":
         return 2 if 12 <= number <= 51 else 0
     if division == "D009":
-        return 5 if 1 <= number <= 24 else 0
+        return 5 if 2 <= number else 0
+    if division == "D012":
+        return {11: 9, 46: 10}.get(number, 0)
     if division == "D013":
         return 3 if 3 <= number <= 14 else 0
     if division == "D014":
@@ -304,7 +328,8 @@ def compare_attributes(record, point, method, clauses, by_key, records_by_code, 
             result["bundle_group"] = grade(
                 MATCH if record.bundle_group == expected else UNKNOWN,
                 "包括の対象項目への所属。群の履歴単位や点数は別", expected=expected,
-                clauses=[BUNDLE_CLAUSES[point["division"]]])
+                clauses=[NUMBERED_BUNDLES[expected]] if expected else
+                [clause for clause in NUMBERED_BUNDLES.values() if clause.split("/")[1] == point["division"]])
         key = point["division"], point["number"]
         if age := age_comparison(record, point, by_key, records_by_code, archive_lines):
             result["age"] = age
@@ -503,6 +528,154 @@ CHOICES += tuple(
 )
 
 
+# 通知の「併せて」を同時実施IDに読み替えず、相手の一致と単位の差を記録する。
+for paragraph, items, peers in (
+    ("2", ("galactoseQual", "galactoseQuant"), ("rf",)),
+    ("3", ("tpo",), ("microsomal",)),
+    ("6", ("ars",), ("jo1Qual", "jo1Semi", "jo1Quant")),
+    ("7/i", ("ccpQual", "ccpQuant", "galactoseQual", "galactoseQuant",
+             "mmp3", "c1q", "rfComplex", "iggRf"), None),
+    ("10", ("cardiolipinComplex",), ("cardiolipinIgg", "cardiolipinIgm", "beta2Igg", "beta2Igm")),
+    ("12", ("igg2Tia",), ("igg2Nephelometry",)),
+    ("16/i", ("dsg3",), ("dsg1",)),
+    ("19/i", ("dsg1",), ("dsg3",)),
+    ("23/i", ("skinCombo",), ("dsg1", "dsg3", "bp180")),
+    ("24/i", ("achr",), ("musk",)),
+    ("27/i", ("musk",), ("achr",)),
+):
+    CHOICES += same_division_choices("D014.eligibilityRules", "D014", paragraph, "performed_together", items, peers)
+
+# D023(36)〜(39)の一連の制約のうち、検査種類に独立に対応する相手。
+# 測定対象で絞る抗体価と、複数種類に共通の単価項目はここに含めない。
+RESPIRATORY_PEERS = (
+    "mycoplasmaQual", "mycoplasmaSemi", "influenzaAntigen", "rsAntigen",
+    "metapneumovirusAntigen", "mycoplasmaChromatography", "mycoplasmaFluorescence",
+    "nonStoolAdenovirus",
+)
+RESPIRATORY_PANEL_PEERS = RESPIRATORY_PEERS + (
+    "pneumoniaeIgG", "pneumoniaeIgA", "pertussisQual", "pertussisSemi",
+    "pneumoniaeIgM", "pertussisAntigen", "pertussisAntibody",
+)
+for paragraph, panel, peers in (
+    ("36/i", "pneumoniaResistancePanel", RESPIRATORY_PEERS + ("pneumococcusCapsule",)),
+    ("37/u", "respiratoryPanelCovid", RESPIRATORY_PANEL_PEERS +
+     ("covidQual", "covidFlu", "covidRs", "covidFluRs", "covidQuant")),
+    ("37/e", "respiratoryPanelWithoutCovid", RESPIRATORY_PANEL_PEERS),
+):
+    CHOICES += tuple(
+        ("D023.SeriesExcludes", f"notice/D023/paragraph/{paragraph}", "treatment_series",
+         ("D023", panel), ("D012", peer)) for peer in peers
+    )
+CHOICES += (
+    ("D023.SeriesExcludes", "notice/D023/paragraph/37/u/ko", "treatment_series",
+     ("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")),
+    ("D023.SeriesExcludes", "notice/D023/paragraph/37/e/u", "treatment_series",
+     ("D023", "respiratoryPanelWithoutCovid"), ("D023", "respiratoryPanelCovid")),
+    ("infectionGroup", "notice/D012/paragraph/43/i", "performed_together",
+     ("D012", "pertussisAntigen"), ("D023", "respiratoryPanelCovid")),
+    ("infectionGroup", "notice/D012/paragraph/43/i", "performed_together",
+     ("D012", "pertussisAntigen"), ("D023", "respiratoryPanelWithoutCovid")),
+)
+
+CHOICES += (
+    ("chemistryPriorityGroup", "notice/D007/paragraph/9", "performed_together",
+     ("D007", "ketoneBodies"), ("D007", "ketoneFractions")),
+    ("chemistryPriorityGroup", "notice/D007/paragraph/12", "specimen",
+     ("D007", "bicarbonate"), ("D007", "bloodGas")),
+    ("chemistryPairChoice", "notice/D007/paragraph/15", "exclusion_simultaneous",
+     ("D007", "bileAcids"), ("D007", "urinarySulfatedBileAcids")),
+    ("chemistryPairChoice", "notice/D007/paragraph/23/i", "performed_together",
+     ("D007", "cystatinC"), ("D007", "pentosidine")),
+)
+CHOICES += same_division_choices("lungMarkerGroup", "D007", "21", "performed_together",
+                                 ("kl6", "surfactantProteinA", "surfactantProteinD"))
+CHOICES += same_division_choices(
+    "endocrineSimultaneousExclusion", "D008", "19", None,
+    ("estriol", "estradiol"), ("estrogenSemiquantitative", "estrogenQuantitative"))
+CHOICES += tuple(
+    ("plasmaRasMonthlyGroup", "notice/D006-22/paragraph/3", "exclusion_month",
+     ("D006-22", "plasmaRas"), ("D004-2", tissue))
+    for tissue in ("drugAid", "otherSimple")
+)
+
+CHOICES += tuple(
+    ("pancreaticGroup", "notice/D001/paragraph/4/i", "performed_together",
+     ("D001", "trypsinogen2"), peer)
+    for peer in (("D007", "amylase"), ("D007", "lipase"), ("D007", "amylaseIsoenzymes"),
+                 ("D007", "trypsin"), ("D009", "8"))
+)
+CHOICES += (
+    ("tumorMonthlyGroups", "notice/D004-2/paragraph/8", "exclusion_month",
+     ("D004-2", "drugAid"), ("D006-12", "plasmaEgfr")),
+    ("tumorMonthlyGroups", "notice/D004-2/paragraph/8", "exclusion_month",
+     ("D004-2", "drugAid"), ("D006-24", "lungPanel")),
+    ("tumorCombinedGroup", "notice/D004-2/paragraph/9", "performed_together",
+     ("D004-2", "drugAid"), ("D006-24", "lungPanel")),
+    ("bladderCytologyGroup", "notice/D006-15/paragraph/3", "exclusion_simultaneous",
+     ("D006-15", "bladder"), ("N004", "2")),
+    ("lungPanelGroup", "notice/D006-24/paragraph/2", "performed_together",
+     ("D006-24", "lungPanel"), ("D004-2", "drugAid")),
+    ("lungPanelGroup", "notice/D006-24/paragraph/2", "performed_together",
+     ("D006-24", "lungPanel"), ("D006-12", "plasmaEgfr")),
+    ("rapidPbp2Group", "notice/D023-2/paragraph/4/i", "performed_together",
+     ("D023-2", "pbp2"), ("D023-2", "rapidPbp2")),
+)
+# D009台帳は項単位。種類に条件のある項は個別対応が残る。
+for paragraph, scope, anchor, peers in (
+    ("3", "performed_together", "3", ("7",)),
+    ("5", "performed_together", "11", ("28",)),
+    ("8", "exclusion_simultaneous", "12", ("21",)),
+    ("10/i", "performed_together", "18", ("6",)),
+    ("15", "performed_together", "24", ("14",)),
+    ("20/u", "performed_together", "31", ("9", "17", "32")),
+    ("21/u", "performed_together", "32", ("9",)),
+    ("21/e", "performed_together", "32", ("17",)),
+    ("24/i", "performed_together", "35", ("3", "7", "15")),
+):
+    CHOICES += same_division_choices("markerGroup", "D009", paragraph, scope, (anchor,), peers)
+
+# 例外のある材料を避け、呼吸器・消化管・泌尿生殖器の通常培養から確認する。
+CHOICES += same_division_choices("cultureChoice", "D018", "1/u", "specimen",
+                                 ("simple",), ("respiratory", "gastrointestinal", "genitourinary"))
+CHOICES += same_division_choices("cultureSiteGroup", "D018", "1/e", "performed_together",
+                                 ("respiratory", "gastrointestinal", "genitourinary"))
+
+# 同じ台帳項目に入る別の疾患・検査も存在するため、行だけで全適用条件の一致としない。
+CONDITIONAL_CHOICE_PROJECTIONS = {
+    "notice/D004-2/paragraph/8", "notice/D004-2/paragraph/9",
+    "notice/D006-22/paragraph/3", "notice/D006-24/paragraph/2",
+    "notice/D009/paragraph/5", "notice/D009/paragraph/10/i", "notice/D009/paragraph/20/u",
+    "notice/D009/paragraph/21/u", "notice/D009/paragraph/21/e",
+}
+
+# 優先方向は正規化後の左右順で解釈する。
+CHOICE_PRIORITIES = {
+    "notice/D007/paragraph/9": ("D007", "ketoneFractions"),
+    "notice/D007/paragraph/12": ("D007", "bloodGas"),
+    "notice/D014/paragraph/12": ("D014", "igg2Tia"),
+    # パネル算定時の別算定制限と、行の優先側を比較する。一連の定義は別に保持する。
+    "notice/D023/paragraph/36/i": ("D023", "pneumoniaResistancePanel"),
+    "notice/D023/paragraph/37/u": ("D023", "respiratoryPanelCovid"),
+    "notice/D023/paragraph/37/e": ("D023", "respiratoryPanelWithoutCovid"),
+    "notice/D023/paragraph/37/u/ko": ("D023", "respiratoryPanelCovid"),
+    "notice/D023/paragraph/37/e/u": ("D023", "respiratoryPanelWithoutCovid"),
+}
+
+
+def matches_choice_direction(direction, keys, clause):
+    priority = CHOICE_PRIORITIES.get(clause)
+    if priority is None:
+        return direction == "3"
+    return direction in {"1", "2"} and keys[int(direction) - 1] == priority
+
+
+CHOICE_NOTICE_CONDITIONS = {
+    "notice/D014/paragraph/16/i": "尋常性天疱瘡の診断後の経過観察",
+    "notice/D014/paragraph/19/i": "落葉状天疱瘡の診断後の経過観察",
+    "notice/D014/paragraph/23/i": "天疱瘡又は類天疱瘡の鑑別診断",
+}
+
+
 FREQUENCIES = {
     ("D000", "emergencyAddition"): ("121", 1, "primary/ch2-part3-section1-subsection1/general/1", "Examinations.assessSpecimen"),
     ("D000", "rapidAddition"): ("121", 5, "primary/ch2-part3-section1-subsection1/general/3", "Examinations.assessSpecimen"),
@@ -550,6 +723,29 @@ for item, paragraph in (
 ):
     FREQUENCIES["D006-27", item] = (
         "53", 1, f"notice/D006-27/paragraph/{paragraph}", "D006PlasmaPanel.prior")
+for division, item, unit, limit, paragraph, definition in (
+    ("D004-3", "dnaMethylation", "53", 1, "unnumbered", "D004Methylation.Eligible"),
+    ("D006-2", "hematopoieticTumorGene", "131", 1, "1", "D006Leukemia.MethodAndFrequency"),
+    ("D006-28", "yDeletion", "53", 1, "unnumbered", "D006Late.fertilityRule"),
+    ("D014", "gm1", "53", 1, "21", "D014.gm1"),
+    ("D014", "gq1b", "53", 1, "22", "D014.gq1b"),
+    ("D014", "glutamate", "131", 1, "25", "D014.glutamate"),
+    ("D014", "gmCsf", "53", 1, "31", "D014.gmCsf"),
+    ("D014", "cardiolipinIgm", "141", 2, "11/a", "D014.ApsSeries"),
+    ("D014", "beta2Igg", "141", 2, "11/i", "D014.ApsSeries"),
+    ("D014", "beta2Igm", "141", 2, "11/u", "D014.ApsSeries"),
+    ("D014", "nf155", "53", 1, "29", "D014.nodopathy"),
+    ("D014", "cntn1", "53", 1, "29", "D014.nodopathy"),
+    ("D014", "hlaScreen", "147", 1, "30", "D014.hlaScreen"),
+    ("D015", "il6", "141", 2, "5", "D015.il6"),
+    ("D015", "concizumab", "53", 1, "16", "D015.concizumab"),
+    ("D015", "tarc", "131", 1, "6/a", "D015.tarcAtopy"),
+    ("D015", "scca2", "131", 1, "11/a", "D015.sccaClinical"),
+    ("D021", "mycobacteriaIdentification", "141", 1, "unnumbered", "D021.OneInSeries"),
+    ("D023", "hivGenotype", "144", 1, "41", "D023.hivGenotype"),
+):
+    FREQUENCIES[division, item] = (unit, limit, f"notice/{division}/paragraph/{paragraph}", definition)
+
 RENAL_FREQUENCIES = {("D001", item) for item in ("transferrin", "albuminQuantitative", "typeIVCollagen")}
 FREQUENCIES.update({key: ("144", 1, "notice/D001/paragraph/3", "D001.renalRule")
                     for key in RENAL_FREQUENCIES})
@@ -558,6 +754,11 @@ FREQUENCY_EXCEPTIONS = {
     ("D001", "oxalate"): "通知が原則とする上限。例外の詳細は欄から読めない",
     ("D001", "lFabp"): "医学的必要性と摘要記載",
     ("D007", "lrg"): "医学的必要性がある月一回経路と診療録・摘要の記載",
+    ("D014", "nf155"): "再燃が疑われ初回陽性の場合の再検査と医学的必要性の記載",
+    ("D014", "cntn1"): "再燃が疑われ初回陽性の場合の再検査と医学的必要性の記載",
+    ("D014", "hlaScreen"): "医学的必要性がある場合の年二回と理由の記載",
+    ("D015", "il6"): "医学的必要性がある三回目以降の測定と理由の記載",
+    ("D015", "concizumab"): "反復が医学的に必要な場合と理由の記載",
 }
 
 FREQUENCY_UNITS = {"53": "患者当り", "121": "日", "131": "月", "138": "週", "141": "一連",
@@ -572,6 +773,92 @@ BUNDLE_CLAUSES = {
     "D014": "primary/D014/note/1",
     "D015": "primary/D015/item/13/note",
 }
+
+
+NUMBERED_BUNDLES = {
+    1: BUNDLE_CLAUSES["D007"], 2: BUNDLE_CLAUSES["D008"], 3: BUNDLE_CLAUSES["D013"],
+    5: BUNDLE_CLAUSES["D009"], 6: BUNDLE_CLAUSES["D006"], 7: BUNDLE_CLAUSES["D014"],
+    9: "primary/D012/item/11/note", 10: "primary/D012/item/46/note", 11: BUNDLE_CLAUSES["D015"],
+    13: "primary/D004-2/item/1/note/1", 14: "primary/D004-2/item/1/note/2",
+    15: "primary/D006-27/note/1", 16: "primary/D006-27/note/2",
+}
+
+BUNDLE_AMOUNT_KEYS = {
+    2: "bundle", 3: "bundle/", 5: "bundle/", 6: "bundle/", 7: "bundle/",
+    9: "viralCap", 10: "classCap", 11: "specificIgeCap", 13: "simple/", 14: "complex/",
+}
+
+
+# 群外の行はコード対応の有無を分ける。未対応行からLeanの項目は推論しない。
+def bundle_membership(expected, observed, mapped):
+    return {
+        "both": sorted(expected & observed),
+        "lean_only": sorted(expected - observed),
+        "master_only_mapped": sorted((observed - expected) & mapped),
+        "master_only_unresolved": sorted(observed - expected - mapped),
+    }
+
+
+def bundle_direct_reviews(points, mapping, records, tables):
+    expected_codes = defaultdict(set)
+    observed_records = defaultdict(set)
+    point_rows = defaultdict(list)
+    mapped = {code for code, entry in mapping.items() if entry["lean"]}
+    for code in mapped:
+        group = bundle_projection(mapping[code]["lean"])
+        if group:
+            expected_codes[group].add(code)
+    for record in records:
+        if record.usable_on(DAY) and record.in_out != "1":
+            observed_records[record.bundle_group].add(record.code)
+    for point in points:
+        point_rows[point["division"]].append(point)
+    result = {}
+    for group, clause in NUMBERED_BUNDLES.items():
+        division = clause.split("/")[1]
+        membership = bundle_membership(expected_codes[group], observed_records[group], mapped)
+        expected_items = {item_key(p) for p in points if bundle_projection(p) == group}
+        mapped_items = {item_key(mapping[c]["lean"]) for c in expected_codes[group]}
+        # 所定点数欄の既存対応に限定。点数値だけから包括額の行を選ばない。
+        amount_key = BUNDLE_AMOUNT_KEYS.get(group)
+        amount_points = [p for p in point_rows[division] if p["kind"] == "note" and
+                         amount_key and p["item"].startswith(amount_key)]
+        amount_rows = [code for code in mapped if mapping[code]["lean"] in amount_points]
+        result[clause] = {
+            "master_group": group, "membership": membership,
+            "unmapped_lean_items": sorted(expected_items - mapped_items),
+            "lean_amount_items": [p["item"] for p in amount_points],
+            "matched_amount_rows": sorted(amount_rows),
+            "amount_status": ("対応行あり" if amount_rows else "対応する包括額の行を同定できない"),
+        }
+    groups_by_code = defaultdict(set)
+    for code in mapped:
+        point = mapping[code]["lean"]
+        for clause, numbers in METHOD_BUNDLES.items():
+            if (point["division"] == clause.split("/")[1] and point["kind"] == "base"
+                    and point["number"] in numbers):
+                groups_by_code[code].add(clause)
+    method_rows = defaultdict(lambda: defaultdict(list))
+    for table, rows in tables.items():
+        if table == "auxiliary":
+            continue
+        for relation in rows:
+            codes = relation["codes"]
+            if any(code not in groups_by_code for code in codes):
+                continue
+            for clause in set.intersection(*(groups_by_code[code] for code in codes)):
+                method_rows[clause][table].append({
+                    **relation_positions(table, relation), "special": relation["special"],
+                    **{field: relation[field] for field in ("direction", "unit", "limit") if field in relation},
+                })
+    for clause in METHOD_BUNDLES:
+        codes = sorted(code for code, clauses in groups_by_code.items() if clause in clauses)
+        result[clause] = {
+            "mapped_codes": codes,
+            "master_group_members": [code for code in codes if mapping[code]["master"]["包括対象検査"] != "0"],
+            "electronic_rows": dict(method_rows[clause]),
+        }
+    return result
 
 
 def relation_positions(table, rel):
@@ -654,10 +941,14 @@ def pair_coverage(left, right, hits):
     return {"status": status, "expected": len(expected), "matching": len(matching)}
 
 
+# D014(7)イの二項目閾値を、手引きが非収載の例とする(1)の三項目閾値と区別する。
+REVIEWED_PAIR_GAPS = {"notice/D014/paragraph/7/i": ("D014", "c1q")}
+
+
 def compare_tables(tables, mapping, locations):
     inverse = defaultdict(set)
     for code, entry in mapping.items():
-        if (p := entry["lean"]) and p["kind"] in {"base", "general"}:
+        if (p := entry["lean"]) and p["kind"] in {"base", "general", "reference"}:
             inverse[item_key(p)].add(code)
     glycemic = (inverse[("D005", "hemoglobinA1c")] | inverse[("D007", "glycatedAlbumin")]
                | inverse[("D007", "anhydroglucitol")])
@@ -668,7 +959,7 @@ def compare_tables(tables, mapping, locations):
     by_frequency = defaultdict(list)
     elf_rows = defaultdict(list)
     general_day_rows = []
-    inclusion_pairs = set()
+    inclusion_pairs = defaultdict(list)
     glycemic_pairs, glycemic_counts = defaultdict(list), defaultdict(list)
     for table, relations in tables.items():
         for rel in relations:
@@ -711,16 +1002,24 @@ def compare_tables(tables, mapping, locations):
                 general_day_rows.append(relation_positions(table, rel))
             elif table.startswith("exclusion_") and (choices := choice_lookup.get(keys)):
                 projections = []
+                ordered_keys = [item_key(p) for p in points]
                 for fn, clause, scope in choices:
-                    same = scope == table and rel["direction"] == "3" and not rel["special"]
+                    same_direction = matches_choice_direction(rel["direction"], ordered_keys, clause)
+                    same = scope == table and same_direction and not rel["special"]
                     by_choice[keys, clause].append({"table": table, "same_projection": same,
                                                     "codes": codes, "direction": rel["direction"],
-                                                    "special": rel["special"], **relation_positions(table, rel)})
-                    projections.append({"clause": clause, "definition": fn, "scope": scope, "same": same})
+                                                    "special": rel["special"], "same_direction": same_direction,
+                                                    **relation_positions(table, rel)})
+                    projections.append({"clause": clause, "definition": fn, "scope": scope,
+                                        "same_direction": same_direction, "same": same})
                 if any(p["same"] for p in projections):
-                    classification = MATCH
-                elif not rel["special"] and rel["direction"] == "3" and any(
-                        p["scope"] is not None and p["scope"] != table for p in projections):
+                    classification = (MATCH if any(p["same"] and p["clause"] not in
+                                      CONDITIONAL_CHOICE_PROJECTIONS for p in projections)
+                                      else REPRESENTATION)
+                elif not rel["special"] and any(
+                        p["same_direction"] and p["scope"] is not None and p["scope"] != table
+                        and p["clause"] not in CONDITIONAL_CHOICE_PROJECTIONS
+                        for p in projections):
                     classification = REPRESENTATION
                 else:
                     classification = UNKNOWN
@@ -728,10 +1027,38 @@ def compare_tables(tables, mapping, locations):
                     classification,
                     "相手と採否の射影を照合。適用範囲・群の履歴単位・特例は条項ごとに確認",
                     clauses=[p["clause"] for p in projections], projections=projections,
-                    reason_type=("単位・同一性の差" if classification == REPRESENTATION else
-                                 "優先方向の対応未確認" if rel["direction"] != "3" else
+                    notice_conditions={p["clause"]: CHOICE_NOTICE_CONDITIONS[p["clause"]]
+                                       for p in projections if p["clause"] in CHOICE_NOTICE_CONDITIONS},
+                    reason_type=("検査種類・適用条件の限定" if classification == REPRESENTATION and
+                                 any(p["same"] for p in projections) else
+                                 "一連の別算定制限と同時の優先方向の差" if classification == REPRESENTATION
+                                 and any(p["scope"] == "treatment_series" and p["same_direction"]
+                                         for p in projections) else
+                                 "単位・同一性の差" if classification == REPRESENTATION else
+                                 "優先方向の対応未確認" if not any(p["same_direction"] for p in projections) else
                                  "特例条件未確認" if rel["special"] else
                                  "履歴単位未確定" if classification == UNKNOWN else "同じ単位・採否の射影"))
+            elif (table == "frequency" and keys == {("D005", "tumorCellAntigens")}
+                  and (rel["unit"], rel["limit"], rel["special"]) == ("141", 1, False)):
+                comparison = grade(
+                    UNMODELED, "通知には抗体の種類・回数によらない一連の所定点数がある",
+                    reason_type="一連での複数実施の集約が未形式化",
+                    clauses=["notice/D005/paragraph/12/u"])
+            elif (table == "frequency" and keys == {("D015", "tarc")}
+                  and (rel["unit"], rel["limit"]) == ("141", 1)):
+                comparison = grade(
+                    REPRESENTATION, "診療目的別の一連一回とコード別枠を区別",
+                    reason_type="診療目的別の上限の射影",
+                    clauses=["notice/D015/paragraph/6/i", "notice/D015/paragraph/6/u"],
+                    notice_exception="薬剤過敏症の鑑別で医学的必要性がある二回目以降と理由の記載"
+                    if rel["special"] else None)
+            elif (table == "frequency" and keys in ({("D014", "ccpQual")}, {("D014", "ccpQuant")})
+                  and (rel["unit"], rel["limit"], rel["special"]) == ("53", 1, True)):
+                comparison = grade(
+                    REPRESENTATION, "目的別の原則一回とコード別枠を区別",
+                    reason_type="診療目的別の上限の射影",
+                    clauses=["notice/D014/paragraph/7/a/i", "notice/D014/paragraph/7/a/ro"],
+                    notice_exception="初回陰性による診断経路と医学的必要性による治療薬再選択経路")
             elif table == "frequency" and points[0] and (expected := FREQUENCIES.get(item_key(points[0]))):
                 unit, limit, clause, fn = expected
                 key = item_key(points[0])
@@ -740,7 +1067,9 @@ def compare_tables(tables, mapping, locations):
                         and (not rel["special"] or exception is not None))
                 shared = key in RENAL_FREQUENCIES or key == ("D006-30", "retinalDystrophy")
                 representation = (shared or rel["special"] or fn == "elfSixMonthInterval"
-                                  or key == ("D000", "rapidAddition"))
+                                  or key == ("D000", "rapidAddition")
+                                  or fn in {"D015.tarcAtopy", "D015.sccaClinical", "D021.OneInSeries",
+                                            "D023.hivGenotype", "D014.ApsSeries"})
                 if same:
                     by_frequency[item_key(points[0])].append(relation_positions(table, rel))
                 comparison = grade(
@@ -817,8 +1146,11 @@ def compare_tables(tables, mapping, locations):
                     reason = comparison["classification"]
                 comparison["reason_type"] = reason
             rel.update(comparison)
-            if table == "inclusion" and all(points):
-                inclusion_pairs.add(keys)
+            if table == "inclusion" and keys in choice_lookup and all(points):
+                inclusion_pairs[keys].append({
+                    "parent": codes[0], "child": codes[1], "unit": rel["unit"],
+                    "special": rel["special"], **relation_positions(table, rel),
+                })
     reverse = {
         "primary/ch2-part3-section1-subsection1/general/1/day": grade(
             MATCH if general_day_rows else UNKNOWN, "緊急加算の優先方向と同日背反を検索",
@@ -827,14 +1159,24 @@ def compare_tables(tables, mapping, locations):
     }
     for fn, clause, scope, a, b in CHOICES:
         hits = by_choice[frozenset((a, b)), clause]
+        included = inclusion_pairs.get(frozenset((a, b)), [])
+        matched = any(hit["same_projection"] for hit in hits)
+        suspect = (REVIEWED_PAIR_GAPS.get(clause) in {a, b}
+                   and bool(inverse[a] and inverse[b]) and not hits and not included)
         reverse[f"{clause}/{a[1]}/{b[1]}"] = grade(
-            MATCH if any(hit["same_projection"] for hit in hits) else UNKNOWN,
+            SOURCE_CONFLICT if suspect else
+            REPRESENTATION if matched and clause in CONDITIONAL_CHOICE_PROJECTIONS else
+            MATCH if matched else UNKNOWN,
             "対応した項目対のテーブル行を検索。関係なしの判定には使わない",
             clauses=[clause], lean_definition=fn, lean_scope=scope,
             mapping_sizes=[len(inverse[a]), len(inverse[b])], electronic_rows=hits,
+            inclusion_rows=included,
             coverage=pair_coverage(inverse[a], inverse[b], hits),
-            reason_type=("同じ単位・採否の射影" if any(hit["same_projection"] for hit in hits) else
-                         "単位違い" if any(scope and hit["table"] != scope for hit in hits) else
+            reason_type=("二項目で発動する通知に対応する表の行が見つからない" if suspect else
+                         "同じ単位・採否の射影" if matched else
+                         "単位違い" if clause not in CONDITIONAL_CHOICE_PROJECTIONS and
+                         any(scope and hit["table"] != scope and hit["same_direction"]
+                             and not hit["special"] for hit in hits) else
                          "コード未対応" if not (inverse[a] and inverse[b]) else
                          "包括側に同じ項目対あり・条件未照合" if frozenset((a, b)) in inclusion_pairs else
                          "特例・方向・適用単位未確認" if hits else "不明"))
@@ -1064,6 +1406,8 @@ def main():
         normalized_name(name): item for name, item in r["names"].items()} for r in name_review}
     name_evidence = {(r["division"], r["number"], normalized_name(name)): proof
                      for r in name_review for name, proof in r.get("evidence", {}).items()}
+    alternative_evidence = {(r["division"], r["number"], normalized_name(name)): proof
+                            for r in name_review for name, proof in r.get("alternatives", {}).items()}
     require(len(reviewed_names) == len(name_review), "名称確認の区分・項番が重複")
     notice = read_index("notice-impact.json")
     require(notice["as_of"] == DAY.isoformat(), "準用索引の基準日が異なる")
@@ -1123,12 +1467,16 @@ def main():
                     origin_status = "登録通知の名称候補・準用関係未確認"
         evidence = name_evidence.get((record.division, record.item, normalized_name(record.name)))
         rate = reference_rate_projection(record, by_key, evidence)
+        alternatives = reviewed_alternatives(
+            candidates, alternative_evidence.get((record.division, record.item, normalized_name(record.name))),
+            record.points)
         mapping[code] = {
             "master": master, "archive_line": archive_lines[code], "index_line": index_line,
             "lean": item, "method": method, "candidates": candidates,
             "reason_type": None if item else code_reason(record, candidates, method),
             "name_evidence": evidence if method == "名称による" or rate else None,
             "reference_rate_projection": rate,
+            "item_alternatives": alternatives,
             "many_to_one": bool(item and evidence and evidence.get("projection") == "多対一"),
             "amendment_name_candidates": amendment_candidates,
             "reference_review_status": ((evidence or {}).get("reference_status",
@@ -1194,12 +1542,21 @@ def main():
         entry["reference_review_status"] or ("通知・Lean対応" if entry["lean"] else (entry["reference_search"] or {}).get("status", "索引なし"))
         for entry in mapping.values() if entry["master"]["準用元区分"]
     )
-    groups = group_inventory(reverse, mapping)
+    indexed_rate_origins = Counter(
+        "準用段落の項番候補あり・名称未確認" if entry["notice_reference_candidates"] else
+        "登録通知索引に準用段落候補なし"
+        for entry in mapping.values()
+        if not entry["lean"] and (rate := entry["reference_rate_projection"])
+        and rate["item_status"] == "項番一致"
+    )
+    groups = group_inventory(reverse, mapping, bundle_direct_reviews(points, mapping, records, tables))
     summary = {
         "divisions": len(divisions), "codes": len(mapping),
         "mapped": sum(entry["lean"] is not None for entry in mapping.values()),
         "name_based": sum(entry["method"] == "名称による" for entry in mapping.values()),
         "many_to_one": sum(entry["many_to_one"] for entry in mapping.values()),
+        "item_alternatives": Counter(entry["item_alternatives"]["projection"]
+                                     for entry in mapping.values() if entry["item_alternatives"]),
         "group_status": {kind: Counter(e["status"] for e in groups if e["kind"] == kind)
                          for kind in ("選択", "包括")},
         "max_count_handling_values": Counter(r["attributes"]["max_count_handling"]["value"]
@@ -1210,6 +1567,7 @@ def main():
                                              for e in mapping.values() if e["reference_rate_projection"]),
         "inclusion_source_rows": len(inclusion_lines),
         "reference_status": reference_status,
+        "reference_same_item_source_search": indexed_rate_origins,
         "amendment_name_hits": sum(bool(e["amendment_name_candidates"]) for e in mapping.values()),
         "unmapped_reference_with_notice_name_hits": sum(bool(e["notice_exact_name_candidates"])
                                                         for e in mapping.values()),

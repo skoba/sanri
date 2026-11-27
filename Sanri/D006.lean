@@ -345,6 +345,10 @@ def MarkerSelection (c : Context) : Prop :=
 def markerCombinationRule : Rule Context Unit :=
   condition "8/i" (fun c => c.item ∈ competingMarkers) MarkerSelection
 
+theorem markerCombinationRule_holds (c : Context) :
+    markerCombinationRule.holds c () ↔ (c.item ∈ competingMarkers → MarkerSelection c) :=
+  Iff.rfl
+
 def fibrinMonomerParagraph : Rule Context Unit :=
   ⟨"notice/D006/paragraph/8", notice "(8)", fun c _ =>
     fibrinMonomerRule.holds c () ∧ markerCombinationRule.holds c ()⟩

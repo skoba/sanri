@@ -290,7 +290,7 @@ def saaChoice := condition 2 "" "383" fun c =>
 def transferrinMethod := condition 3 "" "383" fun c => c.item ∈ [.transferrin, .c3, .c4] →
   c.method = some .sridOrEquivalent
 
-private def electrophoresisItems : List Item := [.wholeAntiserum, .specificAntiserum, .drugImmunofixation]
+def electrophoresisItems : List Item := [.wholeAntiserum, .specificAntiserum, .drugImmunofixation]
 
 def electrophoresisParagraph := condition 4 "" "384" fun c => c.item ∈ electrophoresisItems →
   c.performance.specimen.isSome = true
@@ -300,6 +300,11 @@ def electrophoresisOnce := condition 4 "/a" "384" fun c => c.item ∈ electropho
 
 def electrophoresisChoice := condition 4 "/i" "384" fun c => c.item ∈ electrophoresisItems →
   Excludes c (electrophoresisItems.filter (· != c.item)) Performance.sameSpecimen
+
+theorem electrophoresisChoice_holds (c : Context) :
+    electrophoresisChoice.holds c () ↔ (c.item ∈ electrophoresisItems →
+      Excludes c (electrophoresisItems.filter (· != c.item)) Performance.sameSpecimen) :=
+  Iff.rfl
 
 def specificSerum := condition 4 "/u" "384" fun c => c.item = .specificAntiserum →
   Uses c [.immunoelectrophoresis, .immunofixation]

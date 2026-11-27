@@ -2,12 +2,14 @@
 
 from dataclasses import replace
 import unittest
+from unittest.mock import patch
 
 from test_procedure_master import synthetic
 from tools.audit_specimen import (
-    collection_inclusion, compare_count_attributes, compare_tables, correspondence, exclusion_key,
+    bundle_membership, collection_inclusion, compare_count_attributes, compare_tables,
+    correspondence, exclusion_key, matches_choice_direction, reviewed_alternatives,
     pack_inclusion, pair_coverage, reference_candidates, reference_rate_projection, relation_scope, reviewed_point,
-    table_rows, grade, MATCH, REPRESENTATION, UNKNOWN, UNMODELED,
+    table_rows, grade, MATCH, REPRESENTATION, SOURCE_CONFLICT, UNKNOWN, UNMODELED,
 )
 from tools.procedure_master import parse_row
 from tools.specimen_audit_groups import BUNDLE_IDS, SELECTION_IDS, choice_review
@@ -107,6 +109,51 @@ class SpecimenAuditTests(unittest.TestCase):
         self.assertEqual(pair_coverage({"c"}, {"c"}, [])["status"], "同一コードへ縮約")
         self.assertEqual(len(set(SELECTION_IDS)), 89)
         self.assertEqual(len(set(BUNDLE_IDS)), 22)
+
+    def test_choice_direction_keeps_the_preferred_side_after_normalization(self):
+        clause = "notice/D901/paragraph/1"
+        first = ("D901", "syntheticA")
+        second = ("D902", "syntheticB")
+        with patch.dict("tools.audit_specimen.CHOICE_PRIORITIES", {clause: second}):
+            self.assertTrue(matches_choice_direction("2", [first, second], clause))
+            self.assertTrue(matches_choice_direction("1", [second, first], clause))
+            self.assertFalse(matches_choice_direction("1", [first, second], clause))
+            self.assertFalse(matches_choice_direction("3", [first, second], clause))
+
+    def test_reviewed_pair_gap_requires_two_mapped_endpoints_and_no_related_rows(self):
+        clause = "notice/D901/paragraph/1"
+        first = ("D901", "syntheticA")
+        second = ("D902", "syntheticB")
+        mapping = {code: {"lean": {"division": item[0], "item": item[1], "kind": "base"},
+                          "master": {"入外適用区分": "0"}}
+                   for code, item in (("a", first), ("b", second))}
+        candidate = f"{clause}/syntheticA/syntheticB"
+        row = {"codes": ["a", "b"], "direction": "3", "special": True, "rows": []}
+        with patch("tools.audit_specimen.CHOICES", (("syntheticRule", clause, None, first, second),)):
+            with patch.dict("tools.audit_specimen.REVIEWED_PAIR_GAPS", {clause: first}):
+                incomplete = {**mapping, "b": {**mapping["b"], "lean": None}}
+                for records, related, expected in (
+                    (mapping, [], SOURCE_CONFLICT),
+                    (mapping, [row], UNKNOWN),
+                    (incomplete, [], UNKNOWN),
+                ):
+                    reverse = compare_tables(
+                        {"exclusion_simultaneous": related, "frequency": [], "inclusion": []}, records, {})
+                    self.assertEqual(reverse[candidate]["classification"], expected)
+
+    def test_bundle_membership_compares_both_directions(self):
+        self.assertEqual(bundle_membership({"a", "b"}, {"a", "c", "d"}, {"a", "b", "c"}), {
+            "both": ["a"], "lean_only": ["b"],
+            "master_only_mapped": ["c"], "master_only_unresolved": ["d"],
+        })
+
+    def test_alternatives_keep_multiple_items_at_the_reviewed_price(self):
+        points = [{"division": "D901", "item": item, "points": price}
+                  for item, price in (("a", 12), ("b", 12), ("c", 15))]
+        self.assertEqual(reviewed_alternatives(points, {"items": ["a", "b"]}, 12)["points"],
+                         points[:2])
+        with self.assertRaises(ValueError):
+            reviewed_alternatives(points, {"items": ["a", "c"]}, 12)
 
     def test_master_layout_addition_fields(self):
         record = parse_row(synthetic(cells={38: "6033", 39: "B", 72: "42", 81: "448",

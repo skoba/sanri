@@ -54,10 +54,28 @@ BUNDLE_IDS = [
     for division, paths in BUNDLE_GROUPS.items() for path in paths
 ] + ["notice/D011/paragraph/1", "notice/D017/paragraph/2", "notice/D020/paragraph/1"]
 
+
+# 項目数別の包括額とは別に、実施方法・菌種・一連の集約を検索する範囲。
+METHOD_BUNDLES = {
+    "primary/D016/item/2": {2},
+    "primary/D016/item/4": {4},
+    "primary/D016/item/5": {5},
+    "primary/D019/heading": {1, 2, 3},
+    "primary/D021/heading": {0},
+    "notice/D011/paragraph/1": {3},
+    "notice/D017/paragraph/2": {1, 2, 3},
+    "notice/D020/paragraph/1": {1, 2},
+}
+
 # CHOICES の対が対象群の一部の経路に限られるもの。
 PARTIAL_SCOPE = {
     "notice/D001/paragraph/6/i", "notice/D004-2/paragraph/7", "notice/D005/paragraph/3",
     "notice/D008/paragraph/15", "notice/D008/paragraph/16", "notice/D012/paragraph/28",
+    "notice/D001/paragraph/4/i", "notice/D004-2/paragraph/8", "notice/D004-2/paragraph/9",
+    "notice/D006-22/paragraph/3", "notice/D006-24/paragraph/2",
+    "notice/D009/paragraph/5", "notice/D009/paragraph/10/i", "notice/D009/paragraph/20/u",
+    "notice/D009/paragraph/21/u", "notice/D009/paragraph/21/e",
+    "notice/D018/paragraph/1/u", "notice/D018/paragraph/1/e",
 }
 
 
@@ -67,6 +85,7 @@ def choice_review(pairs, partial_scope):
                 "representation": [], "mapping_sizes_by_pair": None}
     sizes = [p["mapping_sizes"] for p in pairs]
     rows = [r for p in pairs for r in p["electronic_rows"]]
+    inclusions = [r for p in pairs for r in p.get("inclusion_rows", [])]
     reasons = {p["reason_type"] for p in pairs}
     counts = [p["coverage"] for p in pairs]
     expected = sum(c["expected"] for c in counts)
@@ -79,14 +98,15 @@ def choice_review(pairs, partial_scope):
         status, reason = "一部のみ", "一致対あり・他の対又は適用範囲が残る"
     elif "単位違い" in reasons:
         status, reason = "表現の差", "単位違い"
-    elif any(r["direction"] != "3" for r in rows):
+    elif any(not r.get("same_direction", r["direction"] == "3") for r in rows):
         status, reason = "未判定", "優先方向の対応未確認"
     elif reasons == {"不明"}:
         status, reason = "未判定", "表での表現が不明"
     else:
         status, reason = "未判定", "特例・適用単位未確認"
     return {"status": status, "reason_type": reason,
-            "representation": ["背反"] if rows else [],
+            "representation": (["背反"] if rows else []) + (["包括"] if inclusions else []),
+            "pairs_with_inclusion": sum(bool(p.get("inclusion_rows")) for p in pairs),
             "mapping_sizes_by_pair": sizes, "expected_pairs": expected, "matching_pairs": matching,
             "symmetric_simultaneous_pairs": sum(
                 any(r["table"] == "exclusion_simultaneous" and r["direction"] == "3" and not r["special"]
@@ -94,7 +114,7 @@ def choice_review(pairs, partial_scope):
             "pairs_with_any_row": sum(bool(p["electronic_rows"]) for p in pairs)}
 
 
-def group_inventory(reverse, mapping):
+def group_inventory(reverse, mapping, bundle_reviews):
     reverse_pairs = {}
     for row in reverse.values():
         if "coverage" in row:
@@ -118,6 +138,24 @@ def group_inventory(reverse, mapping):
                "status": "所属の部分照合" if seen else "未判定",
                "reason_type": "適用単位・群の完全性は未確認" if seen else "構成項目・関係の個別照合待ち",
                "representation": ["包括"] if seen else []}
+        if group in METHOD_BUNDLES:
+            direct = bundle_reviews[group]
+            observed = direct["electronic_rows"]
+            row.update(
+                status="実施単位の関連を検索",
+                reason_type=("関連行あり・集約条件未照合" if observed else
+                             "方法・菌種・一連の集約に対応する関係を未同定"),
+                representation=sorted(observed), direct_review=direct)
+        elif direct := bundle_reviews.get(group):
+            membership = direct["membership"]
+            unresolved = direct["unmapped_lean_items"] or membership["master_only_unresolved"]
+            differs = membership["lean_only"] or membership["master_only_mapped"]
+            reason = ("所属差候補・適用条件未確認" if differs else
+                      "未対応項目の所属未確認" if unresolved else "対応項目の所属一致・包括額未同定")
+            row.update(status="所属の双方向照合", reason_type=reason, representation=["包括対象検査欄"],
+                       mapped_members=len(membership["both"]) + len(membership["lean_only"]),
+                       master_members=sum(len(codes) for k, codes in membership.items() if k != "lean_only"),
+                       direct_review=direct)
         if group == "primary/D006-4/note/2":
             matched = sum((entry.get("name_evidence") or {}).get("clause") == group
                           and entry["lean"] is not None for entry in mapping.values())

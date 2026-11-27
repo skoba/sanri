@@ -1213,8 +1213,7 @@ def selectedAutoantibodyInput (c : D014.Context) (choices : List GroupChoice)
 /-- D015(4)ア・イ。同一検体の実施を一群にする。欠落した検体IDは未確定。 -/
 def electrophoresisGroup (anchor : Performance D015.Item)
     (rows : List (Performance D015.Item)) : Option ChoiceGroup := do
-  let items : List D015.Item := [.wholeAntiserum, .specificAntiserum, .drugImmunofixation]
-  let candidates := rows.filter fun p => items.contains p.item
+  let candidates := rows.filter fun p => D015.electrophoresisItems.contains p.item
   if !(candidates.contains anchor) ||
       candidates.any (fun p => (anchor.sameSpecimen p).isNone) then none else
     let related := candidates.filter fun p => anchor.sameSpecimen p == some true
