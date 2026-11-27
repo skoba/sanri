@@ -606,15 +606,11 @@ def freeMetanephrineIndication : Rule Context Unit :=
 def freeMetanephrineChoice : Rule Context Unit :=
   ⟨"notice/D008/paragraph/27/i", notice "PDF364頁 D008 27/i",
     fun c _ => c.performance.item ∈ [.metanephrine, .metanephrineFractions, .normetanephrine, .freeMetanephrineFractions] →
-      ∃ s, c.together = some s ∧ SamePatientSurvey c s ∧
-        ((∀ p ∈ s.performed, endocrineGroup [.freeMetanephrineFractions] p.item = false) ∨
-          s.kindCount (endocrineGroup metanephrines) ≤ 1 ∨
-          OnlySelected c s (endocrineGroup metanephrines))⟩
+      endorses c c.together (endocrineGroup metanephrines)⟩
 
 def freeMetanephrineParagraph : Rule Context Unit :=
   ⟨"notice/D008/paragraph/27", notice "PDF364頁 D008 27",
-    fun c _ => c.performance.item = .freeMetanephrineFractions →
-      freeMetanephrineIndication.holds c () ∧ freeMetanephrineChoice.holds c ()⟩
+    fun c _ => freeMetanephrineIndication.holds c () ∧ freeMetanephrineChoice.holds c ()⟩
 
 def amhRule : Rule Context Unit :=
   ⟨"notice/D008/paragraph/28", notice "PDF364頁 D008 28",
@@ -944,6 +940,35 @@ example : PermitsIndividual exampleContext 98 := by
     ohpRule, anpChoice, normetanephrineRule, igfbp3Indication, igfbp3Choice, igfbp3Paragraph,
     freeMetanephrineIndication, freeMetanephrineChoice, freeMetanephrineParagraph, amhRule,
     leptinIndication, leptinGuidance, leptinParagraph]
+
+private def metanephrineSurvey (charged : List Nat) : Survey :=
+  { performed := [{ id := 1, site, item := .endocrine .metanephrine .urine },
+      { id := 2, site, item := .endocrine .metanephrineFractions .urine }]
+    charged }
+
+private def metanephrinePair (charged : List Nat) : Context :=
+  { performance := { id := 1, site, item := .metanephrine }
+    sample := some .urine
+    together := some (metanephrineSurvey charged) }
+
+example : freeMetanephrineChoice.holds (metanephrinePair [1]) () := by
+  refine fun _ => ⟨_, rfl, ?_, Or.inr ?_⟩
+  · simp [metanephrinePair, metanephrineSurvey, SamePatientSurvey]
+  · simp [metanephrinePair, metanephrineSurvey, OnlySelected]
+
+example : ¬ freeMetanephrineChoice.holds (metanephrinePair [1, 2]) () := by
+  intro h
+  obtain ⟨survey, hs, _, selection⟩ := h (by decide)
+  change some (metanephrineSurvey [1, 2]) = some survey at hs
+  have same := Option.some.inj hs
+  subst survey
+  rcases selection with one | selected
+  · exact (by decide : ¬ 2 ≤ 1) one
+  · let fraction : Performance CombinationItem :=
+      { id := 2, site, item := .endocrine .metanephrineFractions .urine }
+    have conflict : fraction.id = (metanephrinePair [1, 2]).performance.id :=
+      selected.2 fraction (by simp [metanephrineSurvey, fraction]) rfl (by simp [metanephrineSurvey, fraction])
+    exact (by decide : (2 : Nat) ≠ 1) conflict
 
 example : ¬ Eligible { exampleContext with diurnal := some true, appropriateDiurnalCount := some false } := by
   intro h

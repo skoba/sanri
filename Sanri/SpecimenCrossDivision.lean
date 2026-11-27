@@ -975,20 +975,172 @@ def infectionInput (c : D012.Context) (g : D012.Combined) (choices : List GroupC
     some { c with combined := some (infectionCombined choices g) }
   else none
 
+inductive HepatitisCombination where
+  | hbCore | ha
+
+/-- D013(5)(6)。同時実施IDでまとまる一群を作る。採血IDは別に扱う。 -/
+def hepatitisGroup (kind : HepatitisCombination) (anchor : Performance D013.Item)
+    (rows : List (Performance D013.Item)) : Option ChoiceGroup := do
+  let (rule, a, b) : Rule D013.Context Unit × D013.Item × D013.Item := match kind with
+    | .hbCore => (D013.hbCoreChoice, .hbcAntibody, .hbcIgM)
+    | .ha => (D013.haChoice, .haAntibody, .haIgM)
+  let candidates := rows.filter fun p => p.item == a || p.item == b
+  if !(candidates.contains anchor) ||
+      candidates.any (fun p => (anchor.simultaneousWith p).isNone) then none else
+    let simultaneous := candidates.filter fun p => anchor.simultaneousWith p == some true
+    let ids := simultaneous.map Performance.id
+    if ids.eraseDups != ids || !(simultaneous.any fun p => p.item == a) ||
+        !(simultaneous.any fun p => p.item == b) then none
+    else some ⟨rule.source, ids, 1⟩
+
+private def hepatitisDnaSimultaneous (antigen : D013.Context) (dna : D023.HbvContext) :
+    Option Bool :=
+  antigen.performance.simultaneousWith
+    { id := dna.performance.id, site := dna.performance.site,
+      item := D013.Item.hbcrAntigen, simultaneous := dna.performance.simultaneous }
+
+/-- D013(8)とD023項4の二件。DNA側の測定法・履歴はD023の規則で評価する。 -/
+def hepatitisDnaGroup (antigen : D013.Context) (dna : D023.HbvContext) : Option ChoiceGroup :=
+  if antigen.item == .hbcrAntigen && antigen.performance.id != dna.performance.id &&
+      hepatitisDnaSimultaneous antigen dna == some true then
+    some ⟨D013.coreRelatedAntigen.source, [antigen.performance.id, dna.performance.id], 1⟩
+  else none
+
 def hepatitisSelectionInput (c : D013.Context) (choices : List GroupChoice)
     (survey : List (Performance D013.Item)) : D013.Context :=
   { c with otherPayableLocal := some (survey.filter fun p =>
       p.id != c.performance.id && retained choices p.id) }
+
+/-- 選択後の候補からD013の局所入力を得る。同時実施の事実は元の記録から渡す。 -/
+def selectedHepatitisInput (c : D013.Context) (choices : List GroupChoice)
+    (survey : List (Performance D013.Item)) : Option D013.Context :=
+  if survey.contains c.performance && retained choices c.performance.id then
+    some { hepatitisSelectionInput c choices survey with simultaneousLocal := some survey }
+  else none
+
+/-- 相手の実施を照合済みの場合に、同時実施と主検査の採否を分けて射影する。 -/
+def hepatitisDnaInput (antigen : D013.Context) (dna : D023.HbvContext)
+    (choices : List GroupChoice) : D013.Context :=
+  let simultaneous := hepatitisDnaSimultaneous antigen dna
+  let antigenSelected := retained choices antigen.performance.id
+  let dnaSelected := retained choices dna.performance.id
+  { antigen with
+    simultaneousHbvDna := simultaneous
+    mainWhenHbvDnaMeasured := if simultaneous == some true && antigenSelected != dnaSelected then
+      some antigenSelected else none }
+
+/-- D023項4の採否にはD013(8)と同じ実施IDを使う。 -/
+def selectedHepatitisDna (dna : D023.HbvContext) (choices : List GroupChoice) :
+    Option D023.HbvContext :=
+  if retained choices dna.performance.id then some dna else none
+
+/-- D014(8)は採血や同日ではなく同時実施を照合する。 -/
+def thyroidAntibodyGroup (trab tsab : Performance D014.Item) : Option ChoiceGroup :=
+  if trab.item == .trab && tsab.item == .tsab && trab.id != tsab.id &&
+      trab.simultaneousWith tsab == some true then
+    some ⟨D014.thyroidStimulation.source, [trab.id, tsab.id], 1⟩
+  else none
+
+/-- D014(12)の併施を確認した二件。通知が指定するTIA法を残す。 -/
+def igg2Choice (tia nephelometry : Performance D014.Item) : Option GroupChoice :=
+  if tia.item == .igg2Tia && nephelometry.item == .igg2Nephelometry &&
+      tia.site.patient == nephelometry.site.patient &&
+      tia.site.institution == nephelometry.site.institution &&
+      tia.id != nephelometry.id then
+    some ⟨⟨D014.igg2.source, [tia.id, nephelometry.id], 1⟩, [tia.id]⟩
+  else none
 
 def autoantibodySelectionInput (c : D014.Context) (choices : List GroupChoice)
     (survey : List (Performance D014.Item)) : D014.Context :=
   { c with combined := some (survey.map Performance.item,
       (survey.filter fun p => retained choices p.id).map Performance.item) }
 
+/-- 確認済みの併測一覧と、同時実施を検査する一覧を区別して渡す。 -/
+def selectedAutoantibodyInput (c : D014.Context) (choices : List GroupChoice)
+    (combined simultaneous : List (Performance D014.Item)) : Option D014.Context :=
+  if retained choices c.performance.id then
+    some { autoantibodySelectionInput c choices combined with
+      simultaneous := some (simultaneous, simultaneous.filter fun p => retained choices p.id) }
+  else none
+
+/-- D015(4)ア・イ。同一検体の実施を一群にする。欠落した検体IDは未確定。 -/
+def electrophoresisGroup (anchor : Performance D015.Item)
+    (rows : List (Performance D015.Item)) : Option ChoiceGroup := do
+  let items : List D015.Item := [.wholeAntiserum, .specificAntiserum, .drugImmunofixation]
+  let candidates := rows.filter fun p => items.contains p.item
+  if !(candidates.contains anchor) ||
+      candidates.any (fun p => (anchor.sameSpecimen p).isNone) then none else
+    let related := candidates.filter fun p => anchor.sameSpecimen p == some true
+    let ids := related.map Performance.id
+    if ids.length < 2 || ids.eraseDups != ids then none
+    else
+      let source := if (related.map Performance.item).eraseDups.length = 1 then
+        D015.electrophoresisOnce.source else D015.electrophoresisChoice.source
+      some ⟨source, ids, 1⟩
+
+/-- D015(11)イ。実施目的を照合した同一暦月の二件。履歴全体の照会は呼出側で行う。 -/
+def atopyProteinGroup (scca tarc : D015.Context) : Option ChoiceGroup :=
+  let a := scca.performance
+  let b := tarc.performance
+  if scca.item == .scca2 && tarc.item == .tarc &&
+      scca.purpose == some .atopicSeverity && tarc.purpose == some .atopicSeverity &&
+      a.id != b.id && a.site.patient == b.site.patient &&
+      a.site.institution == b.site.institution && a.site.date.month == b.site.date.month then
+    some ⟨D015.sccaChoice.source, [a.id, b.id], 1⟩
+  else none
+
 def plasmaProteinSelectionInput (c : D015.Context) (choices : List GroupChoice)
     (survey : List (Performance D015.Item)) : D015.Context :=
   { c with otherSelected := some (survey.filter fun p =>
       p.id != c.performance.id && retained choices p.id) }
+
+/-- 同じ暦月の適用群を確認した二件に選択を渡す。 -/
+def atopyProteinInput (scca tarc : D015.Context) (choices : List GroupChoice) :
+    Option (D015.Context × D015.Context) := do
+  let _ ← atopyProteinGroup scca tarc
+  if retained choices scca.performance.id == retained choices tarc.performance.id then none else
+  let project (c : D015.Context) : D015.Context :=
+    { c with
+      atopyTarcOrSccaSameMonth := some true
+      atopyTarcOrSccaMain := some (retained choices c.performance.id) }
+  return (project scca, project tarc)
+
+/-- D016(1)。同じ項の方法を、確認した一連につき一回の実施料へまとめる。 -/
+def cellularSeriesGroup (anchor : Performance D016.Item) (rows : List (Performance D016.Item)) :
+    Option ChoiceGroup := do
+  if !([D016.Item.tSubset, .granulocyteFunction, .granulocyteScreen].contains anchor.item) then
+    none
+  else
+    let candidates := rows.filter fun p => p.item == anchor.item
+    if !(candidates.contains anchor) ||
+        candidates.any (fun p => (anchor.sameSeries p).isNone) then none else
+      let ids := (candidates.filter fun p => anchor.sameSeries p == some true).map Performance.id
+      if ids.length < 2 || ids.eraseDups != ids then none
+      else some ⟨D016.seriesRule.source, ids, 1⟩
+
+def selectedCellularInput (c : D016.Context) (choices : List GroupChoice)
+    (rows : List (Performance D016.Item)) : Option D016.Context :=
+  if rows.contains c.performance && retained choices c.performance.id then
+    some { c with otherSelected := some (rows.filter fun p =>
+      p.id != c.performance.id && retained choices p.id) }
+  else none
+
+/-- D017(2)。同じ顕微鏡検査として同定した方法別の実施を一回にまとめる。 -/
+def microscopyMethodsGroup (anchor : Performance D017.Item)
+    (rows : List (Performance D017.Item)) : Option ChoiceGroup :=
+  let members := rows.filter fun p => anchor.sameSeries p == some true
+  let ids := members.map Performance.id
+  if !members.contains anchor || rows.any (fun p => (anchor.sameSeries p).isNone) ||
+      ids.length < 2 || ids.eraseDups != ids then none
+  else some ⟨D017.oneExamination.source, ids, 1⟩
+
+def selectedMicroscopyInput (c : D017.Context) (choices : List GroupChoice)
+    (rows : List (Performance D017.Item)) : Option D017.Context :=
+  if rows.contains c.performance && retained choices c.performance.id &&
+      !(rows.any fun p => (c.performance.sameSeries p).isNone) then
+    some { c with selectedInExamination := some (rows.filter fun p =>
+      c.performance.sameSeries p == some true && retained choices p.id) }
+  else none
 
 /-- D018(1)ウ。同一検体の通常培養と簡易培養を照合する。 -/
 def cultureChoice (ordinary simple : D018.Context) : Option GroupChoice :=
@@ -997,6 +1149,21 @@ def cultureChoice (ordinary simple : D018.Context) : Option GroupChoice :=
       ordinary.performance.sameSpecimen simple.performance == some true then
     some ⟨⟨D018.perSpecimen.source, [simple.performance.id], 0⟩, []⟩
   else none
+
+/-- D018(1)エ。同一起因菌の検索群を確認済みで、血液二か所の例外を含まない場合。 -/
+def cultureSiteGroup (rows : List D018.Context) : Option ChoiceGroup := do
+  let first :: rest := rows | none
+  let ids := rows.map (fun c => c.performance.id)
+  if rest.isEmpty || ids.eraseDups != ids || rows.any (fun c => c.material == .blood) ||
+      rest.any (fun c => c.performance.site.patient != first.performance.site.patient ||
+        c.performance.site.institution != first.performance.site.institution) then none
+  else some ⟨D018.selectedSite.source, ids, 1⟩
+
+def cultureSiteInput (c : D018.Context) (rows : List D018.Context)
+    (choices : List GroupChoice) (distinctBloodSites : Option Bool) : D018.Context :=
+  let selected := (rows.filter fun r => retained choices r.performance.id).map
+    (fun r => (r.performance, r.material))
+  { c with searchSelection := some ⟨selected, distinctBloodSites⟩ }
 
 def culturePriority : Rule (D018.Context × D018.Context) GroupChoice :=
   ⟨D018.perSpecimen.id, D018.perSpecimen.source, fun (ordinary, simple) choice =>
@@ -1010,6 +1177,112 @@ theorem culturePriority_determines (ordinary simple : D018.Context) (choice : Gr
   · intro a b ha hb
     simp only [satisfies_cons, satisfies_nil, and_true, culturePriority] at ha hb
     exact Option.some.inj (ha.symm.trans hb)
+
+/-- D019項1〜3。感受性を実際に検査した菌種の識別子から項と菌種数を求める。 -/
+def susceptibilitySpeciesInput (c : D019.Context) (testedSpecies : List Nat) :
+    Option D019.Context :=
+  let count := testedSpecies.eraseDups.length
+  match c.performance.item, count with
+  | .resistance, _ | .combination, _ | _, 0 => none
+  | _, n + 1 =>
+    let item : D019.Item := match n with | 0 => .one | 1 => .two | _ => .threeOrMore
+    some { c with performance := { c.performance with item }, speciesCount := count }
+
+/-- D020(1)。全ての組で同時又は一連の採取を確認できる群を扱う。 -/
+def mycobacterialCollectionGroup (rows : List (Performance D020.Item)) : Option ChoiceGroup :=
+  let ids := rows.map Performance.id
+  if ids.length < 2 || ids.eraseDups != ids ||
+      !rows.all (fun a => rows.all fun b =>
+        a.simultaneousWith b == some true || a.sameSeries b == some true) then none
+  else some ⟨D020.collectionLimit.source, ids, 1⟩
+
+def mycobacterialCollectionInput (c : D020.Context) (rows : List (Performance D020.Item))
+    (choices : List GroupChoice) : Option D020.Context := do
+  let _ ← mycobacterialCollectionGroup rows
+  if !rows.contains c.performance || !retained choices c.performance.id then none
+  else
+    some { c with
+      collection := some rows
+      selected := some (rows.filter fun p => retained choices p.id) }
+
+/-- D021。確認済みの同じ一連に属する同定法・培地の実施を一回にまとめる。 -/
+def mycobacterialIdentificationGroup (anchor : Performance Unit) (rows : List (Performance Unit)) :
+    Option ChoiceGroup :=
+  let related := rows.filter fun p => anchor.sameSeries p == some true
+  let ids := related.map Performance.id
+  if !related.contains anchor || rows.any (fun p => (anchor.sameSeries p).isNone) ||
+      ids.length < 2 || ids.eraseDups != ids then none
+  else some ⟨D021.indication.source, ids, 1⟩
+
+def mycobacterialIdentificationInput (c : D021.Context) (rows : List (Performance Unit))
+    (choices : List GroupChoice) : Option D021.Context :=
+  if rows.contains c.performance && retained choices c.performance.id &&
+      !(rows.any fun p => (c.performance.sameSeries p).isNone) then
+    some { c with selected := some (rows.filter fun p =>
+      c.performance.sameSeries p == some true && retained choices p.id) }
+  else none
+
+/-- D023(36)(37)(39)。治療範囲を確認した既算定と当日の候補を受ける。
+既算定には当日の選択を適用しない。相手の種類と一連の照合は各通知枝が行う。 -/
+def panelBilledCompanions (prior pending : List (Performance D023.SeriesTest))
+    (choices : List GroupChoice) : Option (List (Performance D023.SeriesTest)) :=
+  let ids := (prior ++ pending).map Performance.id
+  if ids.eraseDups != ids then none
+  else some (prior ++ pending.filter fun p => retained choices p.id)
+
+/-- D023(36)イの別算定一覧。適用できる外来経路は区分の制約で評価する。 -/
+def pneumoniaPanelInput (c : D023.PneumoniaPanelContext)
+    (prior pending : List (Performance D023.SeriesTest))
+    (choices : List GroupChoice) : D023.PneumoniaPanelContext :=
+  { c with separatelyBilled := panelBilledCompanions prior pending choices }
+
+/-- D023(37)の一連の別算定候補を共通の採否から渡す。 -/
+def respiratoryPanelInput (c : D023.RespiratoryPanelAssessment)
+    (prior pending : List (Performance D023.SeriesTest))
+    (choices : List GroupChoice) : D023.RespiratoryPanelAssessment :=
+  { c with separatelyBilled := panelBilledCompanions prior pending choices }
+
+/-- D023(39)の一連の別算定候補を共通の採否から渡す。 -/
+def csfPanelInput (c : D023.CsfPanelContext)
+    (prior pending : List (Performance D023.SeriesTest))
+    (choices : List GroupChoice) : D023.CsfPanelContext :=
+  { c with separatelyBilled := panelBilledCompanions prior pending choices }
+
+/-- D023-2(1)イ。併施を確認したPBP2’項1とD023項17。 -/
+def methicillinPbp2Group (gene : D023.MethicillinContext) (pbp2 : D023Other.Context) :
+    Option ChoiceGroup :=
+  let a := gene.performance
+  let b := pbp2.performance
+  if b.item == .pbp2 && a.id != b.id && a.site.patient == b.site.patient &&
+      a.site.institution == b.site.institution then
+    some ⟨D023Other.pbp2Main.source, [a.id, b.id], 1⟩
+  else none
+
+def methicillinPbp2Input (gene : D023.MethicillinContext) (pbp2 : D023Other.Context)
+    (choices : List GroupChoice) : Option (Bool × D023Other.Context) := do
+  let _ ← methicillinPbp2Group gene pbp2
+  let geneSelected := retained choices gene.performance.id
+  let pbpSelected := retained choices pbp2.performance.id
+  if geneSelected == pbpSelected then none
+  else
+    let choice : D023Other.Pbp2Choice := if geneSelected then .d023MethicillinGene else .thisTest
+    some (geneSelected, { pbp2 with pbp2Choice := some choice })
+
+/-- D023-2(4)イの併施を確認した方法違いの二件。核酸検査を実施できるかは別に確認する。 -/
+def rapidPbp2Group (ordinary rapid : D023Other.Context) : Option ChoiceGroup :=
+  let a := ordinary.performance
+  let b := rapid.performance
+  if a.item == .pbp2 && b.item == .rapidPbp2 && a.id != b.id &&
+      a.site.patient == b.site.patient && a.site.institution == b.site.institution then
+    some ⟨D023Other.rapidPbp2Exclusion.source, [a.id, b.id], 1⟩
+  else none
+
+def rapidPbp2Input (ordinary rapid : D023Other.Context) (choices : List GroupChoice) :
+    Option D023Other.Context := do
+  let _ ← rapidPbp2Group ordinary rapid
+  if retained choices rapid.performance.id then
+    some { rapid with separatelyBilledPbp2 := some (retained choices ordinary.performance.id) }
+  else none
 
 /-- 包括に数えることを確認した実施を、指定の単位のIDで分ける。
 対象日にID不明の候補があれば、その群の項目数は未確定とする。 -/
@@ -1315,6 +1588,11 @@ def viralJudgmentCandidate (g : D012.ViralGroup) (_ : g.Assessed) (id : Nat) : O
 def classJudgmentCandidate (g : D012.ClassGroup) (_ : g.Assessed) (id : Nat) : Option Bool :=
   infectionJudgmentCandidate g.measurements id
 
+/-- D013の包括に算入した実施をD026の免疫学的検査候補へ渡す。 -/
+def hepatitisJudgmentCandidate (g : D013.DrawGroup) (_ : g.Assessed)
+    (id : Nat) : Option Bool :=
+  if g.tests.any (fun c => c.performance.id == id) then some true else none
+
 theorem viral_specimen_judgment_candidate (g : D012.ViralGroup) (assessed : g.Assessed)
     (c : D012.Context) (target : D012.Target) (member : (c, target) ∈ g.measurements) :
     viralJudgmentCandidate g assessed c.performance.id = some true := by
@@ -1369,6 +1647,15 @@ theorem day_determines_with_addition_history (c : Day)
   day_determines c site judgment
     (SpecimenOutpatientDay.additions_determine c.additions emergency rapid)
 
+/-- D023(16)ウ。同一検体を照合した廃液検査ではD419項1を別算定しない。 -/
+theorem pylori_collection_not_separate (c : D023.PyloriContext)
+    (row : Performance SpecimenCollection.Item) (collection : SpecimenCollection.Context)
+    (separate : Bool) (pair : D023.PyloriCollectionPair c row collection separate)
+    (waste : c.upperGiEndoscopyWaste = some true) :
+    separate = false := by
+  have rule := pair.2.2.2.2
+  simpa [D023.pyloriCollection, waste] using rule
+
 def collectionCharge (c : SpecimenCollection.Context)
     (h : ∃ p, SpecimenCollection.points c = some p) : Charge :=
   ⟨fun p => SpecimenCollection.points c = some p, by
@@ -1408,6 +1695,27 @@ example :
     · exact ChoiceGroup.valid_single _ (by decide) rfl (by decide)
     · simp at hg
 
+
+private def hbCoreSample : Performance D013.Item :=
+  { id := 1, site := sampleSite, item := .hbcAntibody, draw := some 10, simultaneous := some 20 }
+
+private def hbIgMSample : Performance D013.Item :=
+  { hbCoreSample with id := 2, item := .hbcIgM, draw := some 11 }
+
+private def hbCoreSampleGroup : ChoiceGroup :=
+  ⟨D013.hbCoreChoice.source, [1, 2], 1⟩
+
+example : hepatitisGroup .hbCore hbCoreSample [hbCoreSample, hbIgMSample] =
+    some hbCoreSampleGroup := rfl
+
+example : hepatitisGroup .hbCore hbCoreSample
+    [hbCoreSample, { hbIgMSample with simultaneous := none }] = none := rfl
+
+example : ∃ c : GroupChoice, c.group = hbCoreSampleGroup ∧ c.Valid :=
+  hbCoreSampleGroup.exists_single (by decide) rfl (by decide)
+
+example : (selectedHepatitisInput { performance := hbCoreSample } [⟨hbCoreSampleGroup, [1]⟩]
+    [hbCoreSample, hbIgMSample]).map D013.Context.otherPayableLocal = some (some []) := rfl
 
 private def stoolSample : D003.Context :=
   { performance := { id := 11, site := sampleSite, item := .calprotectin }
