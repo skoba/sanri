@@ -1,9 +1,11 @@
 """通知参照を照合し、検体検査・検体採取の条項別の残作業を出力する。"""
 
 from collections import Counter, defaultdict
+import re
 
 from .fee_coverage import clause_paths
-from .fee_inventory import write_local
+from .fee_inventory import normalized, write_local
+from .notice_inventory import KANA
 from .fee_ledger import load_lean, read_index
 from .local_pdf import verified_pdf_pages
 from .notice_revisions import (amendment_counts, apply_amendments, effective_paragraph_records,
@@ -26,6 +28,38 @@ def matches_replacement(paragraph: dict, rules: list[dict]) -> bool:
         and rule.get("verification") == "checkedAgainstSource"
         for rule in rules
     ))
+
+
+def amendment_branch_matches(paragraph: dict, identifier: str, rules_by_path: dict) -> set[str]:
+    """照合済み改正行の枝を、同じ文書・適用日を指すLean規則に対応付ける。"""
+    matches = set()
+    for change in paragraph["amendments"]:
+        source = change.get("source", {})
+        url, date = source.get("url"), change.get("effective_from")
+        if not url or not date:
+            continue
+        nested = re.fullmatch(r"\(\d+\)([ァ-ヶ])(\d+)", change.get("anchor") or "")
+        change_positions = {(row["page"], row["line"]) for row in change.get("records", [])}
+        for row in paragraph.get("effective_records") or []:
+            if row["source"] != change["document"]:
+                continue
+            # 差分は同じ文書内で別の指示もあり得るため、当該指示の行だけを対象にする。
+            if "replacement" not in paragraph and (row["page"], row["line"]) not in change_positions:
+                continue
+            raw = normalized(row["text"].lstrip())
+            marker = re.match(r"([ァ-ヶ])\s+", raw)
+            ordinal = re.match(r"([1-9][0-9]*)\s+", raw)
+            if marker and marker[1] in KANA:
+                path = f"{identifier}/{KANA[marker[1]]}"
+            elif nested and ordinal and nested[1] in KANA:
+                path = f"{identifier}/{KANA[nested[1]]}/{ordinal[1]}"
+            else:
+                continue
+            if any(rule.get("url") == url and rule.get("edition") == f"{date}適用"
+                   and rule.get("verification") == "checkedAgainstSource"
+                   for rule in rules_by_path.get(path, [])):
+                matches.add(path)
+    return matches
 
 
 def compare_clauses(fee: dict, notice: dict, rules: list[dict],
@@ -60,6 +94,7 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
     matches = set(check["matched"])
     rows = []
     replacement_matches = set()
+    amendment_matches = set()
     for heading in fee["rows"]:
         chapter, code = heading["chapter"], heading["code"]
         if (heading["status"] != "listed" or chapter != 2 or heading["part"] != 3
@@ -83,6 +118,8 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
         for paragraph in paragraphs:
             number = paragraph["number"] if paragraph["number"] is not None else "unnumbered"
             identifier = f"notice/{code}/paragraph/{number}"
+            if len(blocks) == 1 and not unresolved:
+                amendment_matches.update(amendment_branch_matches(paragraph, identifier, rules_by_path))
             if paragraph["status"] == "baseline" and identifier in matches:
                 continue
             if (len(blocks) == 1 and not unresolved
@@ -132,9 +169,11 @@ def compare_clauses(fee: dict, notice: dict, rules: list[dict],
             "notice_branch_refs": matched_branches,
         })
 
-    check["matched"] = sorted(matches | replacement_matches)
-    check["missing"] = sorted(set(check["missing"]) - replacement_matches)
-    check["ambiguous"] = sorted(set(check["ambiguous"]) - replacement_matches)
+    revised_matches = replacement_matches | amendment_matches
+    check["matched"] = sorted(matches | revised_matches)
+    check["matched_from_amendments"] = sorted(revised_matches)
+    check["missing"] = sorted(set(check["missing"]) - revised_matches)
+    check["ambiguous"] = sorted(set(check["ambiguous"]) - revised_matches)
 
     summary = {
         "divisions": len(rows),

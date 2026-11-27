@@ -194,4 +194,4 @@ git check-ignore tensuhyo/inventory/{notice-revisions,notice-impact,clarificatio
 
 改正・訂正索引があれば、`draft_fee` の `review.json` に `notice_revisions` を、同じフォルダに `revisions.txt` を出力します。登録版の抜き出しと併せて、適用済み指示、基準日後に適用される指示、訂正PDFの該当位置を確認できます。索引未生成時は索引なしと表示します。「取得済み資料の範囲では該当なし」は索引での確認結果です。
 
-`specimen-backlog.json` の `notice_paragraph_records` は基準日の段落を `baseline`（登録版のまま）、`amended`（変更）、`added`（新設）、`deleted`（削除）で記録します。変更・新設の抽出行は `effective_records` で出典を追えます。差分の位置が曖昧な場合は要確認になります。11月適用分は `future_notice_amendments`、訂正箇所の画像確認結果は `specimen_corrections` にあります。通知参照IDの照合報告は登録版の位置を対象にします。改正段落の枝の件数は確認待ちです。
+`specimen-backlog.json` の `notice_paragraph_records` は基準日の段落を `baseline`（登録版のまま）、`amended`（変更）、`added`（新設）、`deleted`（削除）で記録します。変更・新設の抽出行は `effective_records` で出典を追えます。差分の位置が曖昧な場合は要確認になります。11月適用分は `future_notice_amendments`、訂正箇所の画像確認結果は `specimen_corrections` にあります。通知参照IDの照合報告では、登録版に加えて、用いた改正文書・適用日と照合できた新設・差替え段落および枝を `matched_from_amendments` に示します。物理頁・抽出行は `effective_records` から確認できます。改正を含む段落の枝の分母は確認待ちです。

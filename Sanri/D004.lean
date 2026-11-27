@@ -163,7 +163,8 @@ private def notice (location : String) : SourceRef :=
 
 private def amendment : SourceRef :=
   ⟨.notification, "保医発0930第2号・別添1", "2026-10-01適用",
-    "PDF2頁 指示1 D004(15)", .checkedAgainstSource, none⟩
+    "PDF2頁 指示1 D004(15)", .checkedAgainstSource,
+    some "https://kouseikyoku.mhlw.go.jp/kantoshinetsu/081002_001.pdf"⟩
 
 def referenceTarget (i : Item) (r : ReferenceTarget) : Prop :=
   match i, r with

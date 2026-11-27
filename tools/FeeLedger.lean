@@ -183,11 +183,17 @@ private unsafe def points : MetaM (List Json) := do
   let brca := D006Oncology.Brca.ledgerItems.map fun i =>
     pointRow "D006-18" (reprStr i |>.splitOn "." |>.getLast!) "base"
       i.number 0 (some D006Oncology.Brca.points)
+  let profiling := D006Profiling.ledgerItems.map fun i =>
+    pointRow "D006-19" (reprStr i |>.splitOn "." |>.getLast!) "base"
+      i.number 0 (some D006Profiling.points)
+  let targeted := D006Targeted.ledgerItems.map fun i =>
+    pointRow ("D006-" ++ toString i.suffix) (reprStr i |>.splitOn "." |>.getLast!) "base"
+      0 0 (some i.points)
   return blood.flatten ++ chemistry.reverse ++ puncture ++ [cxcl10, methylation] ++
     tumor ++ tumorNotes ++ coagulation ++ coagulationNotes ++ [leukemia] ++ bcrAbl ++
     genetic ++ geneticBundle ++ chromosome ++ [banding] ++ gene ++
     [ccr4, fusion, egfr, egfrReduction] ++ residualDisease ++ oncology ++ [nudt15, apoe] ++
-    brca ++ specimens
+    brca ++ profiling ++ targeted ++ specimens
 
 private unsafe def exportLedger : CommandElabM Unit := liftTermElabM do
   let result ← MetaM.run' do

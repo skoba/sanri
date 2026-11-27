@@ -27,6 +27,8 @@ import Sanri.D006Genetic
 import Sanri.D006Chromosome
 import Sanri.D006GeneTests
 import Sanri.D006Oncology
+import Sanri.D006Profiling
+import Sanri.D006Targeted
 import Sanri.PhysiologicalExaminations
 import Sanri.Cardiorespiratory
 import Sanri.UltrasoundMonitoring

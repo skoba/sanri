@@ -4,7 +4,7 @@ import unittest
 
 from tools.draft_fee import notice_excerpt
 from tools.notice_inventory import build_notice
-from tools.specimen_backlog import compare_clauses, matches_replacement
+from tools.specimen_backlog import amendment_branch_matches, compare_clauses, matches_replacement
 
 
 class NoticeInventoryTests(unittest.TestCase):
@@ -23,6 +23,23 @@ class NoticeInventoryTests(unittest.TestCase):
         combined = {**paragraph, "effective_records": [
             {"source": "baseline"}, {"source": "replacement.pdf"}]}
         self.assertFalse(matches_replacement(combined, [rule]))
+
+    def test_added_branch_matches_only_the_effective_directive(self):
+        url = "https://example.test/amendment.pdf"
+        row = {"page": 2, "line": 5, "text": "    ３  合成枝", "source": "amendment.pdf"}
+        change = {"document": "amendment.pdf", "effective_from": "2026-07-01",
+                  "source": {"url": url}, "anchor": "(1)カ2", "records": [row]}
+        paragraph = {"amendments": [change], "effective_records": [row]}
+        rule = {"url": url, "edition": "2026-07-01適用", "verification": "checkedAgainstSource"}
+        parent = "notice/D997/paragraph/1"
+        path = f"{parent}/ka/3"
+        self.assertEqual(amendment_branch_matches(paragraph, parent, {path: [rule]}), {path})
+        self.assertEqual(amendment_branch_matches(
+            {**paragraph, "effective_records": [{**row, "line": 6}]}, parent, {path: [rule]}
+        ), set())
+        self.assertEqual(amendment_branch_matches(
+            paragraph, parent, {path: [{**rule, "edition": "2026-11-01適用"}]}
+        ), set())
 
     def test_scope_spans_and_unresolved_references(self):
         pages = [

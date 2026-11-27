@@ -133,7 +133,7 @@ def clause_paths(rule: dict) -> list[tuple[str, ...]]:
         patterns = {
             "primary": (rf"{division}/(?:heading|item/{number}(?:/note(?:/{number})?)?|note/(?:{number}|{kana}|unnumbered/{number}))",
                         rf"ch{number}-part{number}(?:-section{number})?(?:-subsection{number})?/general/{number}"),
-            "notice": (rf"{division}/paragraph/(?:{number}(?:/{kana})?|unnumbered)",),
+            "notice": (rf"{division}/paragraph/(?:{number}(?:/{kana}(?:/{number})?)?|unnumbered)",),
             "clarification": (rf"[a-z0-9-]+/question/{number}",),
         }
         tail = "/".join(parts[1:])
