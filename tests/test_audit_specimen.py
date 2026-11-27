@@ -51,6 +51,37 @@ class SpecimenAuditTests(unittest.TestCase):
         compare_tables({"exclusion_day": rows, "frequency": [], "inclusion": []}, mapping, {})
         self.assertEqual([r["classification"] for r in rows], [MATCH, UNKNOWN, UNKNOWN])
 
+    def test_reviewed_reverse_pairs_preserve_direction_units_and_specials(self):
+        mapping = {
+            code: {"lean": {"division": division, "kind": "base", "item": item, "number": number},
+                   "master": {"入外適用区分": "0"},
+                   "attributes": {"bundle_group": {"classification": UNKNOWN}}}
+            for code, division, item, number in (
+                ("a", "D012", "gonococcusAntigen", 42), ("b", "D018", "respiratory", 1),
+                ("c", "D008", "hcgQualitative", 1), ("d", "D008", "hcgQuantitative", 19),
+                ("e", "D012", "rapidGroupAStrep", 18),
+            )
+        }
+        rows = [{"codes": list(codes), "direction": direction, "special": special, "rows": []}
+                for codes, direction, special in (
+                    ("ab", "2", False), ("ab", "1", False), ("ab", "2", True),
+                    ("be", "2", False), ("cd", "3", False), ("cd", "3", True),
+                )]
+        compare_tables({"exclusion_simultaneous": rows, "frequency": [], "inclusion": []}, mapping, {})
+        self.assertEqual([row["classification"] for row in rows],
+                         [MATCH, UNKNOWN, UNKNOWN, REPRESENTATION, REPRESENTATION, UNKNOWN])
+
+    def test_reviewed_tumor_frequency_applies_to_the_normal_patient_limit(self):
+        mapping = {"a": {"lean": {"division": "D004-2", "kind": "base", "item": "drugAid", "number": 1},
+                         "master": {"入外適用区分": "0"}}}
+        rows = [{"codes": ["a"], "unit": unit, "limit": limit, "special": special, "rows": []}
+                for unit, limit, special in (
+                    ("53", 1, False), ("131", 1, False), ("53", 2, False), ("53", 1, True),
+                )]
+        compare_tables({"frequency": rows, "inclusion": []}, mapping, {})
+        self.assertEqual([row["classification"] for row in rows],
+                         [REPRESENTATION, UNKNOWN, UNKNOWN, UNKNOWN])
+
     def test_collection_inclusion_leaves_special_or_different_unit_open(self):
         parent = {"division": "D412", "kind": "base"}
         location = (2, 3, "D215")

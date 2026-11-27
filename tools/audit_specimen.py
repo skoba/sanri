@@ -653,8 +653,100 @@ CHOICES += same_division_choices("cultureChoice", "D018", "1/u", "specimen",
 CHOICES += same_division_choices("cultureSiteGroup", "D018", "1/e", "performed_together",
                                  ("respiratory", "gastrointestinal", "genitourinary"))
 
+# 通知の列挙と既存制約を確認した対。併施と同時は別の単位として保持する。
+CHOICES += same_division_choices(
+    "D008.hcgChoiceRule", "D008", "6/i", "performed_together",
+    ("hcgQualitative", "hcgQuantitative", "hcgSemiquantitative"))
+CHOICES += same_division_choices(
+    "D008.freeMetanephrineChoice", "D008", "27/i", "performed_together",
+    ("freeMetanephrineFractions", "metanephrine", "metanephrineFractions", "normetanephrine"))
+CHOICES += same_division_choices(
+    "D015.lightChainChoice", "D015", "12/i", "exclusion_simultaneous",
+    ("lightChain",), ("wholeAntiserum", "specificAntiserum"))
+CHOICES += same_division_choices(
+    "D012.viralClassChoice", "D012", "38/u", "performed_together",
+    ("viralTiter",), ("classSpecificTiter",))
+CHOICES += same_division_choices(
+    "D012.glucanRule", "D012", "36", "performed_together", ("betaGlucan",),
+    ("candidaQual", "candidaSemi", "candidaQuant", "aspergillusAntigen", "arabinitol",
+     "cryptococcusQual", "cryptococcusSemi", "aspergillusIgG"))
+
+
+CHOICES += same_division_choices(
+    "D015.saaChoice", "D015", "2", "performed_together", ("saa",), ("crpQual", "crp"))
+CHOICES += (
+    ("D023.hpvMain", "notice/D023/paragraph/10/i", "performed_together",
+     ("D023", "hpv"), ("D023", "hpvSimpleGenotype")),
+    ("D015.fibronectinChoice", "notice/D015/paragraph/10", "performed_together",
+     ("D015", "fibronectin"), ("D007", "igfbp1Qualitative")),
+    ("D023.trachomatisChoice", "notice/D023/paragraph/1/a", "performed_together",
+     ("D023", "trachomatis"), ("D012", "trachomatisAntigen")),
+    ("D023.gonococcusChoice", "notice/D023/paragraph/2/a", "performed_together",
+     ("D023", "gonococcus"), ("D012", "gonococcusAntigen")),
+    ("D023.groupAStrep", "notice/D023/paragraph/3", "performed_together",
+     ("D023", "groupAStrep"), ("D012", "rapidGroupAStrep")),
+) + tuple(
+    ("D023.combinedGenitourinaryIndication", "notice/D023/paragraph/5/a",
+     "performed_together", ("D023", "gonococcusTrachomatis"), partner)
+    for partner in (("D023", "trachomatis"), ("D023", "gonococcus"),
+                    ("D012", "trachomatisAntigen"), ("D012", "gonococcusAntigen"))
+) + tuple(
+    ("D012.o157Rule", "notice/D012/paragraph/28", "performed_together",
+     ("D012", item), ("D018", "gastrointestinal"))
+    for item in ("ecoliO157Antibody", "ecoliO157Antigen")
+) + tuple(
+    (definition, f"notice/{division}/paragraph/{paragraph}", scope, (division, item),
+     ("D018", culture))
+    for definition, division, paragraph, scope, item in (
+        ("D012.strepCultureRule", "D012", "12", "exclusion_simultaneous", "rapidGroupAStrep"),
+        ("D012.ecoliCultureIncluded", "D012", "30", "culture_inclusion", "ecoliSerotype"),
+        ("D012.gonococcusCultureRule", "D012", "32", "exclusion_simultaneous", "gonococcusAntigen"),
+        ("D023.groupAStrep", "D023", "3", "performed_together", "groupAStrep"),
+    )
+    for culture in ("respiratory", "gastrointestinal", "genitourinary", "bloodOrPuncture",
+                    "other", "simple")
+)
+
+
+for paragraph, definition, anchor, peers in (
+    ("47/i", "covidFluExcludes", "covidFlu",
+     ("influenzaAntigen", "covidQual", "covidQuant", "covidRs", "covidFluRs")),
+    ("53/i", "covidRsExcludes", "covidRs",
+     ("rsAntigen", "covidQual", "covidQuant", "covidFlu", "covidFluRs")),
+    ("54/i", "covidFluRsExcludes", "covidFluRs",
+     ("rsAntigen", "influenzaAntigen", "covidQual", "covidQuant", "covidFlu", "covidRs")),
+    ("59", "hivSpecificRule", "hivSpecific", ("hiv1WesternBlot", "hiv2WesternBlot")),
+):
+    CHOICES += same_division_choices(f"D012.{definition}", "D012", paragraph,
+                                     "performed_together", (anchor,), peers)
+
+
+CHOICES += same_division_choices(
+    "D017.oneExamination", "D017", "2", "same_examination",
+    ("specializedMicroscopy", "heatedAmoeba", "otherMicroscopy"))
+CHOICES += same_division_choices(
+    "D023.pneumoniaPanelExclusions", "D023", "36/i", "treatment_series",
+    ("pneumoniaResistancePanel",), ("respiratorySingle", "legionella"))
+
+
+CHOICES += same_division_choices(
+    "BloodChemistryLate.rules", "D007", "48/i", "performed_together", ("presepsin",),
+    ("procalcitoninQuantitative", "procalcitoninSemiquantitative"))
+CHOICES += tuple(
+    ("BloodChemistryLate.rules", f"notice/D007/paragraph/{paragraph}", "performed_together",
+     ("D007", item), ("D012", "endotoxin"))
+    for paragraph, item in (("47", "procalcitoninQuantitative"),
+                            ("47", "procalcitoninSemiquantitative"), ("48/i", "presepsin"))
+) + tuple(
+    ("D008.PagAllowed", "notice/D008/paragraph/16", "performed_together",
+     ("D007", "alpIsoenzymesPag"), ("D008", item))
+    for item in ("bap", "pinp", "intactPinp")
+)
+
+
 # 同じ台帳項目に入る別の疾患・検査も存在するため、行だけで全適用条件の一致としない。
 CONDITIONAL_CHOICE_PROJECTIONS = {
+    "notice/D012/paragraph/12",
     "notice/D004-2/paragraph/8", "notice/D004-2/paragraph/9",
     "notice/D007/paragraph/26", "notice/D013/paragraph/8",
     "notice/D006-22/paragraph/3", "notice/D006-24/paragraph/2",
@@ -664,6 +756,12 @@ CONDITIONAL_CHOICE_PROJECTIONS = {
 
 # 優先方向は正規化後の左右順で解釈する。
 CHOICE_PRIORITIES = {
+    "notice/D012/paragraph/47/i": ("D012", "covidFlu"),
+    "notice/D012/paragraph/53/i": ("D012", "covidRs"),
+    "notice/D012/paragraph/54/i": ("D012", "covidFluRs"),
+    "notice/D012/paragraph/59": ("D012", "hivSpecific"),
+    "notice/D012/paragraph/12": ("D012", "rapidGroupAStrep"),
+    "notice/D012/paragraph/30": ("D012", "ecoliSerotype"),
     "notice/D007/paragraph/9": ("D007", "ketoneFractions"),
     "notice/D007/paragraph/12": ("D007", "bloodGas"),
     "notice/D014/paragraph/12": ("D014", "igg2Tia"),
@@ -677,6 +775,8 @@ CHOICE_PRIORITIES = {
 
 
 def matches_choice_direction(direction, keys, clause):
+    if clause == "notice/D012/paragraph/32":
+        return direction in {"1", "2"} and keys[int(direction) - 1][0] == "D018"
     priority = CHOICE_PRIORITIES.get(clause)
     if priority is None:
         return direction == "3"
@@ -800,6 +900,11 @@ REVIEWED_FREQUENCY_PROJECTIONS = {
     ("D008", "amh"): ("146", 1, "28", "D008.amhRule"),
     ("D008", "leptin"): ("53", 1, "29/a", "D008.leptinIndication"),
     ("D012", "legionellaAntigen"): ("53", 1, "40", "D012.legionellaRule"),
+    ("D006-12", "plasmaEgfr"): ("53", 2, "2", "D006GeneTests.Egfr.indicationRule"),
+    ("D006-19", "solid"): ("53", 1, "1/a", "D006Profiling.solidRule"),
+    ("D006-19", "hematologic"): ("151", 1, "2/a", "D006Profiling.hematologicRule"),
+    ("D023", "mycobacteria"): ("141", 1, "43", "D023References.mycobacteriaRate"),
+    ("D012", "amoebaAntibodyQual"): ("141", 1, "46", "D012.amoebaAntibodyRule"),
     ("D026", "managementI"): ("131", 1, "7", "SpecimenJudgment.managementNotification"),
     ("D026", "marrow"): ("131", 1, "9", "SpecimenJudgment.marrowNotification"),
     ("D023", "respiratoryPanelCovid"): ("141", 1, "37/a", "D023.panelMethod"),
@@ -810,7 +915,7 @@ REVIEWED_FREQUENCY_PROJECTIONS = {
 for key, (unit, limit, paragraph, definition) in REVIEWED_FREQUENCY_PROJECTIONS.items():
     FREQUENCIES[key] = (unit, limit, f"notice/{key[0]}/paragraph/{paragraph}", definition)
 
-FREQUENCY_UNITS = {"53": "患者当り", "121": "日", "131": "月", "138": "週", "141": "一連",
+FREQUENCY_UNITS = {"53": "患者当り", "151": "１疾患当り", "121": "日", "131": "月", "138": "週", "141": "一連",
                    "144": "3月", "145": "4月", "146": "6月", "147": "12月"}
 
 BUNDLE_CLAUSES = {
@@ -1136,6 +1241,20 @@ def compare_tables(tables, mapping, locations):
                     reason_type="診療目的別の上限の射影",
                     clauses=["notice/D014/paragraph/7/a/i", "notice/D014/paragraph/7/a/ro"],
                     notice_exception="初回陰性による診断経路と医学的必要性による治療薬再選択経路")
+            elif (table == "frequency" and keys in ({("D000", "remote/1")}, {("D000", "remote/2")})
+                  and (rel["unit"], rel["limit"], rel["special"]) == ("121", 1, False)):
+                comparison = grade(
+                    REPRESENTATION, "二経路で共有する一日枠とコード別上限を区別",
+                    reason_type="経路共有の日次上限とコード別枠の差",
+                    clauses=["primary/ch2-part3/general/7"],
+                    lean_definition="SpecimenExaminationGeneral.remoteRate")
+            elif (table == "frequency" and points[0] and points[0]["division"] == "D004-2"
+                  and points[0]["kind"] == "base" and points[0]["number"] == 1
+                  and (rel["unit"], rel["limit"], rel["special"]) == ("53", 1, False)):
+                comparison = grade(
+                    REPRESENTATION, "患者当りの通常枠を照合。履歴は検査種類別で再検査の例外がある",
+                    reason_type="検査種類・目的別履歴とコード別枠の差",
+                    clauses=["notice/D004-2/paragraph/1"], lean_definition="D004Tumor.GeneFrequency")
             elif table == "frequency" and points[0] and (expected := FREQUENCIES.get(item_key(points[0]))):
                 unit, limit, clause, fn = expected
                 key = item_key(points[0])

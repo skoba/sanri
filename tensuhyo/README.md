@@ -168,6 +168,8 @@ git check-ignore tensuhyo/inventory/specimen-external-audit.json
 
 個別の原本確認はローカルの `inventory/3a-5e-partial-review.json`、`3a-5e-no-pair-review.json`、`3a-5e-reverse-review.json`、`3a-5e-frequency-review.json`、`3a-5e-reference-review.json` に記録した。この作業環境に保存したレビュー用の `inventory/3a-5e-review-inputs.py` から更新する場合は、照合JSONを再生成してからリポジトリのルートで `PYTHONPATH=. python3 tensuhyo/inventory/3a-5e-review-inputs.py` を実行する。レビュー入力と原典はローカルの資料である。
 
+工程3a-5fのレポートは、3a-5eの固定分母のローカルレビューJSONを保持した状態で、上記の照合を再生成してから `python3 tensuhyo/inventory/3a-5f-review.py` で更新できます。この作業環境にあるスクリプトは、逆方向・一部収載・算定回数の再確認を `inventory/3a-5f-*-review.json` に記録します。告示項に複数の検査種類が入る場合はコード別の追加索引も記録します。公開文書の最終集計にはこの追加照合を含みます。
+
 ## 残尿測定の限定的なCSV照合
 
 リポジトリのルートから実行します。対象コード・診療日・本文の共有上限と出典は、呼出元が確認して明示する入力です。スクリプト自身が本文やコード対応を公的資料から証明するわけではありません。
