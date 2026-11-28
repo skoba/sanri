@@ -19,6 +19,7 @@ inductive Pending where
   | emptyMembers | externalMember | additionalConditions
   | unknownCardinality | unknownDirection | unsupportedUnit
   | missingReading | missingHistory | missingIdentity
+  | excludedFromRegistration | missingCondition | repeatedGroupMember
   deriving DecidableEq, Repr
 
 inductive Direction where
@@ -42,12 +43,7 @@ def direction (g : Entry) : Option Direction :=
 def mode (g : Entry) : Except Pending (Nat × Nat × Direction) := do
   if g.members.isEmpty then throw .emptyMembers
   if g.members.any (fun key => ["N002", "N004", "N005", "N005-2", "D313", "D419"].contains key.1) then throw .externalMember
-  if ["notice/D002/paragraph/5", "notice/D005/paragraph/3", "primary/D017/note/unnumbered/1",
-      "notice/D009/paragraph/20/u", "notice/D009/paragraph/21/e",
-      "notice/D009/paragraph/21/u", "notice/D014/paragraph/1",
-      "notice/D014/paragraph/2", "notice/D014/paragraph/7/i",
-      "notice/D018/paragraph/1/e", "notice/D018/paragraph/1/u"].contains g.id then
-    throw .additionalConditions
+  if g.outsideReason.isSome then throw .excludedFromRegistration
   let some (minimum, limit) := g.cardinality | throw .unknownCardinality
   let some ruleDirection := direction g | throw .unknownDirection
   return (minimum, limit, ruleDirection)
@@ -123,6 +119,52 @@ def generate (g : Entry) (rows : List Row) (read : String → Option Reading)
   | some (unit, minimum, limit, ruleDirection) =>
     return instances unit (members g rows) minimum limit ruleDirection
 
+/-- 異なる二種類以上と、条項が指定する起点がそろう場合だけ候補を作る。医学的適用条件は条項と実施IDの組に対して確認する。 -/
+def generateRegistered (g : Entry) (rows : List Row) (read : String → Option Reading)
+    (condition : String → List Nat → Option Bool) : Except Pending (List Instance) := do
+  if g.dayRegistration.isNone then throw .excludedFromRegistration
+  let relevant := members g rows
+  let keys := (relevant.map Performance.item).eraseDups
+  if keys.length < 2 || !(g.dayAnchor.all keys.contains) then return []
+  let candidates ← generate g relevant read
+  let groups ← candidates.filterM fun group => do
+    let keys := group.members.map Performance.item
+    if keys.eraseDups.length < 2 || !(g.dayAnchor.all keys.contains) then return false
+    if g.dayRegistration == some .conditional then
+      let some confirmed := condition g.id ((group.members.map Performance.id).mergeSort)
+        | throw .missingCondition
+      return confirmed
+    else return true
+  if !groups.all (fun group =>
+      let keys := group.members.map Performance.item
+      keys.eraseDups.length == keys.length) then throw .repeatedGroupMember
+  return groups
+
+/-- 確認済みの採否を上限制約と方向に照合する。 -/
+def Instance.checkSelection (g : Instance) (keep : Nat → Option Bool) : Bool :=
+  g.members.all (fun row => (keep row.id).isSome) &&
+    (g.members.filter fun row => keep row.id == some true).length ≤ g.limit &&
+    match g.direction with
+    | .principal => true
+    | .retain item => g.members.all fun row => keep row.id == some (row.item == item)
+
+theorem checkSelection_sound (g : Instance) (keep : Nat → Option Bool)
+    (checked : g.checkSelection keep = true) :
+    g.Permits (fun id => keep id == some true) := by
+  rcases g with ⟨rows, limit, direction⟩
+  cases direction with
+  | principal =>
+    simp [Instance.checkSelection, Instance.Permits, Bool.and_eq_true] at checked ⊢
+    exact checked.2
+  | retain item =>
+    simp only [Instance.checkSelection, Bool.and_eq_true, decide_eq_true_eq,
+      List.all_eq_true, beq_iff_eq] at checked
+    refine ⟨checked.1.2, ?_⟩
+    intro row member
+    change (keep row.id == some true) = (row.item == item)
+    rw [checked.2 row member]
+    cases (row.item == item) <;> rfl
+
 theorem prepare_perm (g : Entry) {rows other : List Row} (h : rows.Perm other) (read history) :
     prepare g rows read history = prepare g other read history := by
   have hp : (members g rows).Perm (members g other) := h.filter _
@@ -184,6 +226,21 @@ theorem principal_pairs_iff (rows : List Row) (keep : Nat → Bool) :
       (rows.map Performance.id).Pairwise (fun a b => keep a = true → keep b = false) := by
   rw [principal_iff, ← atMostOne_iff_pairwise, List.filter_map, List.length_map]
   rfl
+
+theorem two_members_iff (left right : Row) (keep : Nat → Bool) :
+    (Instance.mk [left, right] 1 .principal).Permits keep ↔
+      (keep left.id = true → keep right.id = false) := by
+  rw [principal_pairs_iff]
+  simp
+
+/-- 上限制約だけの重複では、どの成分でも空の採否が解になる。 -/
+theorem principal_overlap_has_solution (groups : List Instance)
+    (principal : ∀ group ∈ groups, group.direction = .principal) :
+    Permits groups (fun _ => false) := by
+  intro group member
+  have empty : group.members.filter (fun _ => false) = [] := by
+    exact List.filter_eq_nil_iff.mpr (by simp)
+  simp [Instance.Permits, principal group member, empty]
 
 theorem direction_iff (rows : List Row) (limit : Nat) (key : ItemKey) (keep : Nat → Bool)
     (bound : (rows.filter fun row => row.item == key).length ≤ limit) :

@@ -1447,6 +1447,12 @@ def indexed_choice_pairs():
         (("D007", item), ("D010", counterpart))
         for item, counterpart in product(("totalCarnitine", "freeCarnitine"),
                                         ("8/i", "8/ro", "8/ha", "8/ni")))
+    # 検体検査外の相手も構成として残す。照合対象のマッピングがない相手は未比較になる。
+    group_pairs["notice/D001/paragraph/6/i"].update(
+        (("D001", "prostaglandinEMajorMetabolite"), partner)
+        for partner in (("D007", "lrg"), ("D313", "colonoscopy")))
+    group_pairs["notice/D007/paragraph/46/i"].add(
+        (("D007", "lrg"), ("D313", "colonoscopy")))
     return group_pairs
 
 
@@ -1474,8 +1480,18 @@ def check_choice_inventory():
     require(all(len(members) == len(typed[clause]) for clause, members in typed_rows),
             "型付き選択群内の項目が重複")
     status = dict(projection["generic_generation"])
+    require(set(status) == set(actual) | set(outside), "選択群の判定の集合が不一致")
+    require(all(kind in ("generated_checked_shape", "generated_conditional") or kind.startswith("outside/")
+                for kind in status.values()),
+            "選択群に未判定の状態が残る")
+    require(projection["registered_boundaries"], "適用条件又は起点項目の境界の生成結果が不一致")
+    for component in projection["component_witnesses"]:
+        require(component["all_generated"], "合成した重複成分の汎用生成に失敗")
+        if component["generated"]:
+            require(component["empty"] and component["singleton"],
+                    "登録群の重複成分に対する合成採否が上限制約を満たさない")
     require(set(typed) == {clause for clause, kind in status.items()
-                           if kind == "generated_checked_shape"},
+                           if kind in ("generated_checked_shape", "generated_conditional")},
             "汎用生成で照合する条項の集合が不一致")
     require(all(expected.get(clause) == members for clause, members in typed.items()),
             "型付き項目キーとPythonの選択群索引が不一致")

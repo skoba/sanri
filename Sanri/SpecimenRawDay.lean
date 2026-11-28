@@ -189,6 +189,12 @@ structure Input where
   individualStandalone : Nat → Option Bool := fun _ => none
   /-- 重複成分で群が発動しないことを区分別の適用条件まで照合した入力。 -/
   inactiveSelection : String → Option Bool := fun _ => none
+  /-- 単位が未確定の併施群の読み。条項が同時・同一検体を指定する場合はその指定を使う。 -/
+  selectionReading : String → Option CotestReading := fun _ => none
+  /-- 医学的条件の確認。実施IDを昇順に揃えた群ごとに与える。 -/
+  selectionCondition : String → List Nat → Option Bool := fun _ _ => none
+  /-- 追加登録した群の共通採否。適用群の実施では未確認を許さない。 -/
+  selectionKeep : Nat → Option Bool := fun _ => none
   /-- 一連の院内履歴を確認し、原実施群から今回算定候補を選べることを確認する。 -/
   seriesConfirmed : BundleKey → Bool := fun _ => false
   /-- D006-24(2)の併施範囲を確認した当日の候補。 -/
@@ -651,6 +657,51 @@ def checkedSelectionKeys : List (String × List SpecimenSelectionInventory.ItemK
    (D013.hbCoreChoice.id, hepatitis [.hbcAntibody, .hbcIgM]),
    (D013.haChoice.id, hepatitis [.haAntibody, .haIgM])]
 
+/-- 新規の日次群の構成を、区分別の項目型から照合する。 -/
+def registeredSelectionKeys : List (String × List SpecimenSelectionInventory.ItemKey) :=
+  let urine (items : List UrineFecalTests.UrineSpecial) :=
+    items.filterMap fun i => (Individual.urineSelectionKey i).map ("D001", ·)
+  let infection (items : List D012.Item) :=
+    items.filterMap fun i => (Individual.infectionKey i).map ("D012", ·)
+  let antibody (items : List D014.Item) :=
+    items.filterMap fun i => (Individual.autoantibodySelectionKey i).map ("D014", ·)
+  let puncture (items : List D004.Item) :=
+    items.filterMap fun i => (Individual.punctureSelectionKey i).map ("D004", ·)
+  let endocrine (items : List D008.Item) :=
+    items.filterMap fun i => (Individual.endocrineSelectionKey i).map ("D008", ·)
+  let marker (items : List D009.Item) :=
+    items.filterMap fun i => (Individual.markerSelectionKey i).map ("D009", ·)
+  [("notice/D001/paragraph/9/i", urine [.lFabp, .ngal]),
+   ("notice/D012/paragraph/2",
+     infection [.mycoplasmaQual, .mycoplasmaSemi, .mycoplasmaChromatography, .mycoplasmaFluorescence]),
+   ("notice/D012/paragraph/31/i", infection [.pneumococcusCapsule, .pneumococcusWall]),
+   ("notice/D012/paragraph/48/e", infection [.dengueAntigen, .dengueCombo]),
+   ("notice/D014/paragraph/3", antibody [.microsomal, .tpo]),
+   ("notice/D014/paragraph/8", antibody [.trab, .tsab]),
+   ("notice/D014/paragraph/16/i", antibody [.dsg1, .dsg3]),
+   ("notice/D014/paragraph/19/i", antibody [.dsg1, .dsg3]),
+   ("notice/D014/paragraph/24/i", antibody [.achr, .musk]),
+   ("notice/D014/paragraph/27/i", antibody [.achr, .musk]),
+   ("notice/D004/paragraph/13/i", puncture [.amyloidRatio, .phosphoTau, .phosphoTauAmyloidRatio]),
+   ("notice/D008/paragraph/3", endocrine [.reninActivity, .reninQuantitative]),
+   ("notice/D008/paragraph/25", endocrine [.metanephrine, .normetanephrine]),
+   ("notice/D008/paragraph/26/i", endocrine [.igfbp3, .somatomedinC]),
+   ("notice/D008/paragraph/27/i", endocrine [.freeMetanephrineFractions, .metanephrine, .metanephrineFractions, .normetanephrine]),
+   ("notice/D009/paragraph/3", marker [⟨2, 0⟩, ⟨6, 0⟩]),
+   ("notice/D009/paragraph/5", marker [⟨10, 0⟩, ⟨27, 0⟩]),
+   ("notice/D009/paragraph/8", marker [⟨11, 0⟩, ⟨20, 0⟩]),
+   ("notice/D009/paragraph/10/i", marker [⟨17, 0⟩, ⟨5, 1⟩]),
+   ("notice/D009/paragraph/15", marker [⟨13, 0⟩, ⟨23, 0⟩]),
+   ("notice/D009/paragraph/20/u", marker [⟨30, 0⟩, ⟨8, 0⟩, ⟨16, 1⟩, ⟨31, 0⟩]),
+   ("notice/D009/paragraph/21/e", marker [⟨16, 1⟩, ⟨31, 0⟩]),
+   ("notice/D009/paragraph/21/u", marker [⟨8, 0⟩, ⟨31, 0⟩]),
+   ("notice/D009/paragraph/24/i", marker [⟨14, 0⟩, ⟨2, 0⟩, ⟨6, 0⟩, ⟨34, 0⟩]),
+   ("notice/D013/paragraph/8", [("D013", (Individual.hepatitisSelectionKey .hbcrAntigen).getD ""),
+     ("D023", Individual.hbvQuantitySelectionKey)]),
+   ("notice/D015/paragraph/4/i",
+     ([.wholeAntiserum, .specificAntiserum, .drugImmunofixation] : List D015.Item).filterMap
+       fun i => (Individual.proteinSelectionKey i).map ("D015", ·))]
+
 private def namedKey (division item : String) : Option SpecimenSelectionInventory.ItemKey :=
   if item == "" then none else some (division, item)
 
@@ -699,12 +750,32 @@ def Input.pendingOverlap (c : Input) : List String :=
       else if entry.id == "notice/D018/paragraph/1/e" then matched.length ≥ 2
       else (matched.map Performance.item).eraseDups.length ≥ 2).map (·.id)
 
-/-- D007(9)の算定側は条項から決まる。読みが未指定の併測候補は保留する。 -/
+/-- 構成を照合した群を日次に渡す。適用条件と採否は未確認なら保留する。 -/
+def Input.registeredChoices (c : Input) : Option (List GroupChoice) := do
+  let keys := registeredSelectionKeys.flatMap Prod.snd
+  let rows := c.selectionRows.filter fun row => keys.contains row.item
+  if (rows.map Performance.item).eraseDups.length < 2 then return []
+  let entries := SpecimenSelectionInventory.inventory.filter (·.dayRegistration.isSome)
+  let groups ← entries.mapM fun entry => do
+    let groups ← (SpecimenSelectionGeneration.generateRegistered entry rows
+      (fun id => (c.selectionReading id).map CotestReading.generationReading)
+      c.selectionCondition).toOption
+    groups.mapM fun group =>
+      if group.checkSelection c.selectionKeep then
+        let ids := group.members.map Performance.id
+        let keep := ids.filter fun id => c.selectionKeep id == some true
+        some ⟨⟨entry.source, ids, keep.length⟩, keep⟩
+      else none
+  return groups.flatten
+
+/-- 照合済みの共通採否とD007(9)が指定する採否を、既存の日次の選択に合流させる。 -/
 def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
   let rows := c.ketones
-  if ![.ketoneBodies, .ketoneFractions].all (fun item => rows.any (·.item == item)) then return []
+  let registered ← c.registeredChoices
+  if ![.ketoneBodies, .ketoneFractions].all (fun item => rows.any (·.item == item)) then
+    return registered
   let groups ← generateGroups "notice/D007/paragraph/9" rows ketoneKey "D007" c.ketoneReading
-  groups.mapM fun group => do
+  let ketones ← groups.mapM fun group => do
     let .retain retainedKey := group.direction | none
     let [first, second] := group.members | none
     let other ← rows.find? fun row =>
@@ -714,6 +785,7 @@ def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
     let existing ← chemistryPriorityGroup other retained
     let projected ← groupProjection group existing.group
     return ⟨projected, [retained.id]⟩
+  return registered ++ ketones
 
 theorem ketone_priority_iff (choice : BloodChemistryFurther.Choice) :
     BloodChemistryFurther.Pair.ketones.rule.holds true choice ↔ choice = .second := by
@@ -1394,7 +1466,9 @@ theorem without_additions_sound (c : Input) (selected : Option (List Nat))
 -- 複数区分の合成例はカーネルで簡約して検査する。
 section
 set_option maxRecDepth 4096
-private def site : Site := ⟨1, 2, ⟨⟨2026, 10⟩, ⟨22, by decide⟩⟩⟩
+private def site : Site := ⟨1, 2, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩
+
+example : Date.ofParts 2026 10 22 = some site.date := by decide
 
 private def base : Input where
   judgment := ⟨⟨site, [], false, ⟨⟨site.monthScope, []⟩, by simp⟩, ⟨site.monthScope, []⟩⟩,
@@ -1411,7 +1485,7 @@ private def base : Input where
   emergency := fun _ => none
   rapid := fun _ => none
 
-private def urineDaySite : Site := ⟨1, 2, ⟨⟨2026, 10⟩, ⟨22, by decide⟩⟩⟩
+private def urineDaySite : Site := site
 
 private def urineDayBase : Input :=
   { base with
@@ -1763,6 +1837,58 @@ example :
       lungPanelTogether := [(panel, [counterpart])] }
     (day.groups.map (List.map ChoiceGroup.members),
       (day.prepare none).isNone) = (some [[1, 2]], true) := by decide
+
+private def coreAntigenExample : Individual := by
+  let p : Performance D013.Item :=
+    { id := 98, site := urineDaySite, item := .hbcrAntigen, simultaneous := some 6 }
+  let history : ClaimHistory D013.Item :=
+    ⟨⟨{ p.site.monthScope with institution := none }, []⟩, by simp⟩
+  let c : D013.Context :=
+    { performance := p, specimen := some .serum, priorClaims := some history
+      diagnosisOrResponsePurpose := some true, simultaneousHbvDna := some true
+      mainWhenHbvDnaMeasured := some true }
+  refine Individual.d013 c ?_
+  simp [D013.Eligible, D013.eligibilityRules, satisfies_cons, satisfies_nil,
+    D013.antigenMethod, D013.antibodyMethod, D013.reactivationScreen, D013.coreMethod,
+    D013.hbCoreChoice, D013.haChoice, D013.serotype, D013.coreRelatedAntigen,
+    D013.genotype, D013.Context.item, D013.SingleChoice, c, p]
+  refine ⟨by decide, history, rfl, by decide⟩
+
+private def coreDnaExample : Individual := by
+  let p : Performance Unit :=
+    { id := 99, site := urineDaySite, item := (), simultaneous := some 6 }
+  let c : D023.OutpatientInput :=
+    ⟨.hbv { performance := p, method := .pcr, considersReactivation := some false },
+      true, .outpatient, none, none, none⟩
+  refine Individual.d023 c { p with item := c.test } rfl ?_ ?_
+  · simp [D023.OutpatientEligible, D023.OutpatientTest.Eligible, D023.OutpatientTest.tier,
+      D023.OutpatientTest.rapidTarget, c]
+    exact ⟨by simp, Or.inl rfl⟩
+  · intro anchor h
+    exact Option.some.inj h.symm
+
+private def registeredGroupsDay (principal : Nat) : Input :=
+  let added := [coreAntigenExample, coreDnaExample]
+  let previous := generatedGroupsDay
+  { previous with
+    rows := previous.rows ++ added.map (fun i => { i.performance with item := .individual i.performance.item })
+    individualFacts := fun id => (added.find? (·.performance.id == id)).orElse (fun _ =>
+      previous.individualFacts id)
+    selectionKeep := fun id => some (id == principal) }
+
+example :
+    (registeredGroupsDay 98).registeredChoices.map (List.map (·.selected)) = some [[98]] :=
+  by decide
+
+example :
+    total (registeredGroupsDay 98) (some [20, 33, 70, 90, 91, 93]) = some 5983 := by decide
+
+example :
+    total (registeredGroupsDay 99) (some [20, 33, 70, 90, 91, 93]) = some 5993 := by decide
+
+example :
+    let c := registeredGroupsDay 98
+    ({ c with selectionKeep := fun _ => none : Input }.registeredChoices).isNone = true := by decide
 
 private def seriesExample (id : Nat) (series : Nat) : Individual := by
   let p : Performance Unit := { id, site, item := (), series := some series }

@@ -554,7 +554,8 @@ private def mycoplasmaSelection (c : Context) : Prop :=
   isMycoplasma c.performance.item = true → ∃ g, c.combined = some g ∧
     g.Valid c.performance ∧
     let members := g.members.filter (isMycoplasma ∘ Performance.item)
-    (2 ≤ members.length → selectedFrom g members c.performance 1)
+    (2 ≤ (members.map Performance.item).eraseDups.length →
+      selectedFrom g members c.performance 1)
 
 def mycoplasmaAntibodyRule : Rule Context Unit :=
   condition "2" "370" "2" mycoplasmaSelection
@@ -1735,6 +1736,15 @@ theorem judgment_category (i : Item) :
 private def sample (item : Item) : Context :=
   { performance := ⟨1, ⟨2, 3, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩, .local item,
     none, some 1, none, none⟩ }
+
+/-- 同じ検査種類を二度実施しても、この併施条項の二種類にはならない。 -/
+example :
+    let p := (sample .mycoplasmaQual).performance
+    mycoplasmaAntibodyRule.holds
+      { sample .mycoplasmaQual with combined := some { members := [p, { p with id := p.id + 1 }] } } () := by
+  simp [mycoplasmaAntibodyRule, mycoplasmaSelection, condition, Combined.Valid, isMycoplasma, sample]
+  intro repeated
+  exact False.elim ((by decide : ¬ 2 ≤ ([RelatedTest.local .mycoplasmaQual, .local .mycoplasmaQual].eraseDups).length) repeated)
 
 private def aspergillusSample : Context :=
   { sample .aspergillusIgG with

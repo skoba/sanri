@@ -205,7 +205,85 @@ def cultureKey : D018.Item → String
   | .other => "other"
   | .simple => "simple"
 
+def urineSelectionKey : UrineFecalTests.UrineSpecial → Option String
+  | .lFabp => some "lFabp"
+  | .ngal => some "ngal"
+  | _ => none
+
+def autoantibodySelectionKey : D014.Item → Option String
+  | .microsomal => some "microsomal"
+  | .tpo => some "tpo"
+  | .trab => some "trab"
+  | .tsab => some "tsab"
+  | .dsg1 => some "dsg1"
+  | .dsg3 => some "dsg3"
+  | .achr => some "achr"
+  | .musk => some "musk"
+  | _ => none
+
+def punctureSelectionKey : D004.Item → Option String
+  | .jointFluid => some "jointFluid"
+  | .amyloidRatio => some "amyloidRatio"
+  | .phosphoTau => some "phosphoTau"
+  | .phosphoTauAmyloidRatio => some "phosphoTauAmyloidRatio"
+  | _ => none
+
+def endocrineSelectionKey : D008.Item → Option String
+  | .reninActivity => some "reninActivity"
+  | .reninQuantitative => some "reninQuantitative"
+  | .metanephrine => some "metanephrine"
+  | .normetanephrine => some "normetanephrine"
+  | .igfbp3 => some "igfbp3"
+  | .somatomedinC => some "somatomedinC"
+  | .freeMetanephrineFractions => some "freeMetanephrineFractions"
+  | .metanephrineFractions => some "metanephrineFractions"
+  | _ => none
+
+def markerSelectionKey (item : D009.Item) : Option String :=
+  match item.number, item.variant with
+  | 3, 0 => some "3"
+  | 6, 1 => some "6"
+  | 7, 0 => some "7"
+  | 9, 0 => some "9"
+  | 11, 0 => some "11"
+  | 12, 0 | 12, 1 => some "12"
+  | 14, 0 => some "14"
+  | 15, 0 => some "15"
+  | 17, 1 => some "17"
+  | 18, 0 => some "18"
+  | 21, 0 => some "21"
+  | 24, 0 => some "24"
+  | 28, 0 => some "28"
+  | 31, 0 => some "31"
+  | 32, 0 => some "32"
+  | 35, 0 => some "35"
+  | _, _ => none
+
+def hepatitisSelectionKey : D013.Item → Option String
+  | .hbcrAntigen => some "hbcrAntigen"
+  | _ => none
+
+def proteinSelectionKey : D015.Item → Option String
+  | .wholeAntiserum => some "wholeAntiserum"
+  | .specificAntiserum => some "specificAntiserum"
+  | .drugImmunofixation => some "drugImmunofixation"
+  | _ => none
+
+def hbvQuantitySelectionKey : String := "hbvQuantity"
+
+def dnaSelectionKey : D023.OutpatientTest → Option String
+  | .hbv _ => some hbvQuantitySelectionKey
+  | _ => none
+
 def infectionKey : D012.Item → Option String
+  | .mycoplasmaQual => some "mycoplasmaQual"
+  | .mycoplasmaSemi => some "mycoplasmaSemi"
+  | .mycoplasmaChromatography => some "mycoplasmaChromatography"
+  | .mycoplasmaFluorescence => some "mycoplasmaFluorescence"
+  | .pneumococcusCapsule => some "pneumococcusCapsule"
+  | .pneumococcusWall => some "pneumococcusWall"
+  | .dengueAntigen => some "dengueAntigen"
+  | .dengueCombo => some "dengueCombo"
   | .endotoxin => some "endotoxin"
   | .rapidGroupAStrep => some "rapidGroupAStrep"
   | .ecoliO157Antibody => some "ecoliO157Antibody"
@@ -294,7 +372,7 @@ def d023 (c : D023.OutpatientInput) (row : Performance D023.OutpatientTest)
     (_anchor : ∀ p, d023Anchor c.test = some p → p = { row with item := () }) : Individual :=
   let key := match row.item with
     | .groupStrep _ => some ("D023", "groupAStrep")
-    | _ => none
+    | item => (dnaSelectionKey item).map ("D023", ·)
   ⟨{ row with item := c.test.judgmentTest }, c.points, none, key⟩
 
 def d023Reference (a : D023References.Assessment) (row : Performance Unit) (p : Nat)
@@ -305,7 +383,8 @@ def d023Reference (a : D023References.Assessment) (row : Performance Unit) (p : 
 
 def d001 (c : D001.Context) (p : Nat) (_eligible : D001.Eligible c)
     (rate : Satisfies D001.rules c p) : Individual :=
-  fromRule c.performance (D001.judgmentTest c) c D001.rules p id rate
+  { fromRule c.performance (D001.judgmentTest c) c D001.rules p id rate with
+    selectionKey := (urineSelectionKey c.performance.item).map ("D001", ·) }
 
 def d003 (c : D003.Context) (p : Nat) (rate : Satisfies D003.rules c p) : Individual :=
   fromRule c.performance (D003.judgmentTest c) c D003.rules p id rate
@@ -314,7 +393,7 @@ def d004 (c : D004.Context) (row : Performance D004.Item)
     (_item : row.item = c.item) (category : SpecimenJudgment.Category) (p : Nat)
     (rate : Satisfies D004.rules c p) : Individual :=
   { fromRule row (D004.judgmentTest c.item category) c D004.rules p id rate with
-    selectionKey := if row.item == .jointFluid then some ("D004", "jointFluid") else none }
+    selectionKey := (punctureSelectionKey row.item).map ("D004", ·) }
 
 def d004_3 (c : D004Methylation.Context) (row : Performance Unit)
     (_site : row.site = c.site) (category : SpecimenJudgment.Category) (p : Nat)
@@ -327,13 +406,16 @@ def d006 (c : D006.Context) (_eligible : D006.Eligible c)
     addition (c.item.points + ·) rate
 
 def d008 (c : D008.Context) (_eligible : D008.Eligible c) : Individual :=
-  fromRule c.performance (D008.judgmentTest c.performance.item) c.performance.item
-    D008.individualRules c.performance.item.points id ((D008.individual_iff _ _).mpr rfl)
+  { fromRule c.performance (D008.judgmentTest c.performance.item) c.performance.item
+      D008.individualRules c.performance.item.points id ((D008.individual_iff _ _).mpr rfl) with
+    selectionKey := (endocrineSelectionKey c.performance.item).map ("D008", ·) }
 
 def d009 (c : D009.Context) (_eligible : D009.Eligible c) (p : Nat)
     (rate : Satisfies D009.itemRules c.performance.item p) : Individual :=
-  fromRule c.performance (D009.judgmentTest c.performance.item) c.performance.item D009.itemRules
-    p id rate
+  { fromRule c.performance (D009.judgmentTest c.performance.item) c.performance.item
+      D009.itemRules p id rate with
+    selectionKey := if c.route == .d009 then (markerSelectionKey c.performance.item).map ("D009", ·)
+      else none }
 
 def d012 (c : D012.Context) (i : D012.Item) (_item : c.performance.item = .local i)
     (_eligible : D012.Eligible c) : Individual :=
@@ -342,17 +424,20 @@ def d012 (c : D012.Context) (i : D012.Item) (_item : c.performance.item = .local
     selectionKey := (infectionKey i).map ("D012", ·) }
 
 def d013 (c : D013.Context) (_eligible : D013.Eligible c) : Individual :=
-  fromRule c.performance (D013.judgmentTest c.item) c.item D013.rates c.item.points id
-    ((D013.rate_iff _ _).mpr rfl)
+  { fromRule c.performance (D013.judgmentTest c.item) c.item D013.rates c.item.points id
+      ((D013.rate_iff _ _).mpr rfl) with
+    selectionKey := (hepatitisSelectionKey c.item).map ("D013", ·) }
 
 def d014 (c : D014.Context) (_eligible : D014.Eligible c) : Individual :=
-  fromRule c.performance (D014.judgmentTest c.item) c.item D014.rates c.item.points id
-    ((D014.rate_iff _ _).mpr rfl)
+  { fromRule c.performance (D014.judgmentTest c.item) c.item D014.rates c.item.points id
+    ((D014.rate_iff _ _).mpr rfl) with
+    selectionKey := (autoantibodySelectionKey c.item).map ("D014", ·) }
 
 def d015 (c : D015.Context) (_eligible : D015.Eligible c)
     (specialistWrittenReport : Bool) : Individual :=
-  fromRule c.performance (D015.judgmentTest c.item specialistWrittenReport)
-    c.item D015.rates c.item.points id ((D015.rate_iff _ _).mpr rfl)
+  { fromRule c.performance (D015.judgmentTest c.item specialistWrittenReport)
+      c.item D015.rates c.item.points id ((D015.rate_iff _ _).mpr rfl) with
+    selectionKey := (proteinSelectionKey c.item).map ("D015", ·) }
 
 end Individual
 end Sanri.MedicalFee.SpecimenRawDay

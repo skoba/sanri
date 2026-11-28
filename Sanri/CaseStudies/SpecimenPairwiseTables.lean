@@ -1,5 +1,6 @@
 import Sanri.SpecimenCrossDivision
 import Sanri.CaseStudies.TableProjection
+import Sanri.SpecimenSelectionGeneration
 
 namespace Sanri.MedicalFee.CaseStudies.SpecimenPairwiseTables
 
@@ -560,5 +561,33 @@ theorem respiratory_series_missing_pair_disagrees :
 
 example : Satisfies [respiratoryNotice, respiratoryObservedTable] confirmed false := by
   simp [Satisfies, respiratoryNotice, respiratoryObservedTable, D023.SeriesExcludes, pairLimits, respiratoryMissingObservation]
+
+/-- 項目・実施ID・必要件数が一致するとき、従来の射影の件数と同じ形になる。 -/
+theorem count_projection (group : ChoiceGroup) (rows : List SpecimenSelectionGeneration.Row)
+    (ids : rows.map Performance.id = group.members) (keep : Nat → Bool) :
+    (SpecimenSelectionGeneration.Instance.mk rows group.count .principal).Permits keep ∧
+        group.count ≤ (group.members.filter keep).length ↔
+      (group.members.filter keep).length = group.count := by
+  have count : (group.members.filter keep).length =
+      (rows.filter fun row => keep row.id).length := by
+    rw [← ids, List.filter_map, List.length_map]
+    rfl
+  rw [count, SpecimenSelectionGeneration.principal_exact_iff]
+
+/-- 選んだ一件のD014区分評価に、二種類の実施と共通採否を射影する。 -/
+theorem autoantibody_pair_projection (p q : Performance D014.Item)
+    (distinct : p.item ≠ q.item) (key : D014.Item → SpecimenSelectionInventory.ItemKey)
+    (keep : Nat → Bool) (selected : keep p.id = true) :
+    let indexed := [{ p with item := key p.item }, { q with item := key q.item }]
+    let c : D014.Context :=
+      { performance := p, combined := some ([p.item, q.item],
+        (([p, q].filter fun row => keep row.id).map Performance.item)) }
+    D014.PairChoice c [p.item] [q.item] ↔
+      (SpecimenSelectionGeneration.Instance.mk indexed 1 .principal).Permits keep := by
+  dsimp only
+  rw [SpecimenSelectionGeneration.two_members_iff]
+  cases peer : keep q.id <;>
+    simp [D014.PairChoice, D014.Context.item, selected, peer, distinct, Ne.symm distinct]
+  exact ⟨[p.item, q.item], [p.item], ⟨rfl, rfl⟩, by simp [Ne.symm distinct]⟩
 
 end Sanri.MedicalFee.CaseStudies.SpecimenPairwiseTables
