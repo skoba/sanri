@@ -10,6 +10,14 @@ inductive UnitKind where
   | simultaneous | specimen | draw | day | month | series | week | examination | organism | virus | specimenOrigin | unresolved
   deriving DecidableEq, Repr
 
+inductive DayRegistration where
+  | identified | conditional
+  deriving DecidableEq
+
+inductive OutsideReason where
+  | external | key | role | period | shape | projection | notSelection
+  deriving Repr, DecidableEq
+
 structure Entry where
   id : String
   source : SourceRef
@@ -20,72 +28,102 @@ structure Entry where
   /-- 算定側・除外側の指定が確認されたか。未確認は none。 -/
   directed : Option Bool
   inAuditIndex : Bool
+  /-- 接続済みの異種項目がそれぞれ一件の範囲で日次評価に使う登録。 -/
+  dayRegistration : Option DayRegistration := none
+  /-- 汎用生成の対象外にした理由。 -/
+  outsideReason : Option OutsideReason := none
 
 private def entry (id : String) (unit : UnitKind)
     (cardinality : Option (Nat × Nat)) (members : List ItemKey)
-    (inAuditIndex : Bool := true) (directed : Option Bool := none) : Entry :=
+    (inAuditIndex : Bool := true) (directed : Option Bool := none)
+    (dayRegistration : Option DayRegistration := none) (outsideReason : Option OutsideReason := none) :
+    Entry :=
   let primary := id.startsWith "primary/"
   let source : SourceRef := if primary then
     ⟨.primaryText, "令和8年厚生労働省告示第69号・別表第一", "令和8年度", id, .unchecked, some "https://www.mhlw.go.jp/content/12400000/001686842.pdf"⟩
   else
     ⟨.notification, "保医発0305第6号・別添1", "2026-10-07訂正後", id, .unchecked, some "https://www.mhlw.go.jp/content/12400000/001757385.pdf"⟩
-  ⟨id, source, members, unit, cardinality, directed, inAuditIndex⟩
+  ⟨id, source, members, unit, cardinality, directed, inAuditIndex, dayRegistration, outsideReason⟩
 
 /-- 外部照合索引の構成項目。部分経路の相手や空欄を含む。 -/
 def inventory : List Entry := [
   entry "notice/D001/paragraph/3" .simultaneous (some (2, 1))
     [("D001", "albuminQuantitative"), ("D001", "transferrin"), ("D001", "typeIVCollagen")] true (some false),
   entry "notice/D001/paragraph/4/i" .unresolved (some (2, 1))
-    [("D001", "trypsinogen2"), ("D007", "amylase"), ("D007", "amylaseIsoenzymes"), ("D007", "lipase"), ("D007", "trypsin"), ("D009", "8")] true (some false),
+    [("D001", "trypsinogen2"), ("D007", "amylase"), ("D007", "amylaseIsoenzymes"), ("D007", "lipase"), ("D007", "trypsin"), ("D009", "8")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D001/paragraph/6/i" .month (some (2, 1))
     [("D001", "prostaglandinEMajorMetabolite"), ("D003", "calprotectin"),
-      ("D007", "lrg"), ("D313", "colonoscopy")] true (some false),
+      ("D007", "lrg"), ("D313", "colonoscopy")] true (some false)
+    (outsideReason := some .external),
   entry "notice/D001/paragraph/9/i" .unresolved (some (2, 1))
-    [("D001", "lFabp"), ("D001", "ngal")] true (some false),
+    [("D001", "lFabp"), ("D001", "ngal")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D002/paragraph/5" .unresolved (some (2, 1))
-    [("D002", "microscopy"), ("D002-2", "flow")] true (some false),
+    [("D002", "microscopy"), ("D002-2", "flow")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D003/paragraph/4/u" .month (some (2, 1))
-    [] true (some false),
+    [] true (some false)
+    (outsideReason := some .external),
   entry "notice/D004/paragraph/1" .unresolved (some (2, 1))
-    [("D004", "jointFluid"), ("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")] true (some false),
+    [("D004", "jointFluid"), ("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D004/paragraph/13/i" .unresolved (some (2, 1))
-    [("D004", "amyloidRatio"), ("D004", "phosphoTau"), ("D004", "phosphoTauAmyloidRatio")] true (some false),
+    [("D004", "amyloidRatio"), ("D004", "phosphoTau"), ("D004", "phosphoTauAmyloidRatio")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D004-2/paragraph/7" .month (some (2, 1))
-    [("D004-2", "complex"), ("D004-2", "drugAid"), ("D004-2", "otherSimple"), ("D006-14", "flt3"), ("D006-16", "jak2"), ("D006-2", "hematopoieticTumorGene"), ("D006-6", "immuneRearrangement")] true (some false),
+    [("D004-2", "complex"), ("D004-2", "drugAid"), ("D004-2", "otherSimple"), ("D006-14", "flt3"), ("D006-16", "jak2"), ("D006-2", "hematopoieticTumorGene"), ("D006-6", "immuneRearrangement")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D004-2/paragraph/8" .month (some (2, 1))
-    [("D004-2", "drugAid"), ("D006-12", "plasmaEgfr"), ("D006-24", "lungPanel")] true (some false),
+    [("D004-2", "drugAid"), ("D006-12", "plasmaEgfr"), ("D006-24", "lungPanel")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D004-2/paragraph/9" .unresolved (some (2, 1))
-    [("D004-2", "drugAid"), ("D006-24", "lungPanel")] true (some false),
+    [("D004-2", "drugAid"), ("D006-24", "lungPanel")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D004-2/paragraph/10" .unresolved (some (2, 1))
-    [] true (some false),
+    [] true (some false)
+    (outsideReason := some .external),
   entry "notice/D004-2/paragraph/11" .unresolved (some (2, 1))
-    [("D004-2", "complex"), ("D004-2", "drugAid"), ("D006-18", "tumorCells")] true (some false),
+    [("D004-2", "complex"), ("D004-2", "drugAid"), ("D006-18", "tumorCells")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D005/paragraph/3" .specimen (some (2, 1))
-    [("D005", "automatedDifferential"), ("D005", "eosinophilCount"), ("D005", "microscopicDifferential")] true (some false),
+    [("D005", "automatedDifferential"), ("D005", "eosinophilCount"), ("D005", "microscopicDifferential")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D005/paragraph/7" .unresolved (some (2, 1))
-    [("D005", "bloodMicroorganisms"), ("D005", "dnaContainingRedCellCount")] true (some false),
+    [("D005", "bloodMicroorganisms"), ("D005", "dnaContainingRedCellCount")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D005/paragraph/9" .month none
-    [("D005", "hemoglobinA1c"), ("D007", "anhydroglucitol"), ("D007", "glycatedAlbumin")],
+    [("D005", "hemoglobinA1c"), ("D007", "anhydroglucitol"), ("D007", "glycatedAlbumin")]
+    (outsideReason := some .period),
   entry "notice/D006/paragraph/8/i" .simultaneous (some (2, 1))
     [("D006", "fibrinMonomer"), ("D006", "prothrombinFragment"), ("D006", "tat")] true (some false),
   entry "primary/D006-4/note/2" .draw none
-    [],
+    []
+    (outsideReason := some .shape),
   entry "notice/D006-10/paragraph/unnumbered" .unresolved (some (2, 1))
-    [("D006-10", "ccr4"), ("N002", "5")] false (some false),
+    [("D006-10", "ccr4"), ("N002", "5")] false (some false)
+    (outsideReason := some .external),
   entry "notice/D006-15/paragraph/3" .simultaneous (some (2, 1))
-    [("D006-15", "bladder"), ("N004", "2")] true (some false),
+    [("D006-15", "bladder"), ("N004", "2")] true (some false)
+    (outsideReason := some .external),
   entry "notice/D006-22/paragraph/3" .month (some (2, 1))
-    [("D004-2", "drugAid"), ("D004-2", "otherSimple"), ("D006-22", "plasmaRas")] true (some false),
+    [("D004-2", "drugAid"), ("D004-2", "otherSimple"), ("D006-22", "plasmaRas")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D006-24/paragraph/2" .unresolved (some (2, 1))
-    [("D004-2", "drugAid"), ("D006-12", "plasmaEgfr"), ("D006-24", "lungPanel")] true (some false),
+    [("D004-2", "drugAid"), ("D006-12", "plasmaEgfr"), ("D006-24", "lungPanel")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D006-27/paragraph/3/e" .unresolved (some (2, 1))
-    [("D006-27", "alk"), ("N002", "6"), ("N005-2", "heading")] false (some false),
+    [("D006-27", "alk"), ("N002", "6"), ("N005-2", "heading")] false (some false)
+    (outsideReason := some .external),
   entry "notice/D006-27/paragraph/5/e" .unresolved (some (2, 1))
-    [("D006-27", "ntrk"), ("D006-18", "blood"), ("D006-18", "tumorCells")] false (some false),
+    [("D006-27", "ntrk"), ("D006-18", "blood"), ("D006-18", "tumorCells")] false (some false)
+    (outsideReason := some .role),
   entry "notice/D006-27/paragraph/6/e" .unresolved none
-    [("D006-27", "ras"), ("D006-22", "plasmaRas")] false (some true),
+    [("D006-27", "ras"), ("D006-22", "plasmaRas")] false (some true)
+    (outsideReason := some .role),
   entry "notice/D006-27/paragraph/10/u" .unresolved (some (2, 1))
-    [("D006-27", "microsatellite"), ("D006-18", "tumorCells")] false (some false),
+    [("D006-27", "microsatellite"), ("D006-18", "tumorCells")] false (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/2" .simultaneous (some (2, 1))
     [("D007", "calcium"), ("D007", "ionizedCalcium")] true (some false),
   entry "notice/D007/paragraph/3" .simultaneous (some (2, 1))
@@ -101,201 +139,299 @@ def inventory : List Entry := [
   entry "notice/D007/paragraph/15" .simultaneous (some (2, 1))
     [("D007", "bileAcids"), ("D007", "urinarySulfatedBileAcids")] true (some false),
   entry "notice/D007/paragraph/17/e" .specimen (some (2, 1))
-    [("D007", "freeCarnitine"), ("D007", "totalCarnitine"), ("D010", "8/ha"), ("D010", "8/i"), ("D010", "8/ni"), ("D010", "8/ro")] true (some false),
+    [("D007", "freeCarnitine"), ("D007", "totalCarnitine"), ("D010", "8/ha"), ("D010", "8/i"), ("D010", "8/ni"), ("D010", "8/ro")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/18" .unresolved (some (2, 1))
-    [("D007", "alpIsoenzymesAndBap"), ("D008", "bap")] true (some false),
+    [("D007", "alpIsoenzymesAndBap"), ("D008", "bap")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/21" .unresolved (some (2, 1))
-    [("D007", "kl6"), ("D007", "surfactantProteinA"), ("D007", "surfactantProteinD")] true (some false),
+    [("D007", "kl6"), ("D007", "surfactantProteinA"), ("D007", "surfactantProteinD")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D007/paragraph/22" .month (some (2, 1))
-    [("D007", "troponinI"), ("D007", "troponinTQualitative"), ("D007", "troponinTQuantitative")] true (some false),
+    [("D007", "troponinI"), ("D007", "troponinTQualitative"), ("D007", "troponinTQuantitative")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D007/paragraph/23/i" .unresolved (some (2, 1))
-    [("D007", "cystatinC"), ("D007", "pentosidine")] true (some false),
+    [("D007", "cystatinC"), ("D007", "pentosidine")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D007/paragraph/26" .unresolved (some (2, 1))
-    [("D007", "creatinine"), ("D007", "inulin")] true (some false),
+    [("D007", "creatinine"), ("D007", "inulin")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/27" .unresolved (some (2, 1))
-    [("D007", "hFabpQualitative"), ("D007", "hFabpQuantitative"), ("D007", "myoglobinQualitative"), ("D007", "myoglobinQuantitative")] true (some false),
+    [("D007", "hFabpQualitative"), ("D007", "hFabpQuantitative"), ("D007", "myoglobinQualitative"), ("D007", "myoglobinQuantitative")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/30" .unresolved (some (2, 1))
-    [("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false),
+    [("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/38" .day (some (2, 1))
-    [],
+    []
+    (outsideReason := some .period),
   entry "notice/D007/paragraph/40/i" .unresolved (some (2, 1))
-    [("D007", "hyaluronicAcid"), ("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false),
+    [("D007", "hyaluronicAcid"), ("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/41/i" .unresolved (some (2, 1))
-    [("D007", "autotaxin"), ("D007", "hyaluronicAcid"), ("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false),
+    [("D007", "autotaxin"), ("D007", "hyaluronicAcid"), ("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/42/i" .unresolved (some (2, 1))
-    [("D007", "autotaxin"), ("D007", "ck18f"), ("D007", "hyaluronicAcid"), ("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false),
+    [("D007", "autotaxin"), ("D007", "ck18f"), ("D007", "hyaluronicAcid"), ("D007", "mac2"), ("D007", "procollagenIII"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/43/u" .unresolved (some (2, 1))
-    [("D007", "autotaxin"), ("D007", "ck18f"), ("D007", "elfScore"), ("D007", "mac2"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false),
+    [("D007", "autotaxin"), ("D007", "ck18f"), ("D007", "elfScore"), ("D007", "mac2"), ("D007", "typeIVCollagen"), ("D007", "typeIVCollagen7S")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/46/i" .month (some (2, 1))
-    [("D003", "calprotectin"), ("D007", "lrg"), ("D313", "colonoscopy")] true (some false),
+    [("D003", "calprotectin"), ("D007", "lrg"), ("D313", "colonoscopy")] true (some false)
+    (outsideReason := some .external),
   entry "notice/D007/paragraph/47" .unresolved (some (2, 1))
-    [("D007", "procalcitoninQuantitative"), ("D007", "procalcitoninSemiquantitative"), ("D012", "endotoxin")] true (some false),
+    [("D007", "procalcitoninQuantitative"), ("D007", "procalcitoninSemiquantitative"), ("D012", "endotoxin")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D007/paragraph/48/i" .unresolved (some (2, 1))
-    [("D007", "presepsin"), ("D007", "procalcitoninQuantitative"), ("D007", "procalcitoninSemiquantitative"), ("D012", "endotoxin")] true (some false),
+    [("D007", "presepsin"), ("D007", "procalcitoninQuantitative"), ("D007", "procalcitoninSemiquantitative"), ("D012", "endotoxin")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D008/paragraph/3" .unresolved (some (2, 1))
-    [("D008", "reninActivity"), ("D008", "reninQuantitative")] true (some false),
+    [("D008", "reninActivity"), ("D008", "reninQuantitative")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D008/paragraph/4" .simultaneous none
-    [] true (some true),
+    [] true (some true)
+    (outsideReason := some .key),
   entry "notice/D008/paragraph/6/i" .unresolved (some (2, 1))
-    [("D008", "hcgBeta"), ("D008", "hcgQualitative"), ("D008", "hcgQuantitative"), ("D008", "hcgSemiquantitative")] true (some false),
+    [("D008", "hcgBeta"), ("D008", "hcgQualitative"), ("D008", "hcgQuantitative"), ("D008", "hcgSemiquantitative")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D008/paragraph/7/i" .week (some (2, 1))
-    [("D008", "anp"), ("D008", "bnp"), ("D008", "ntProBnp")] true (some false),
+    [("D008", "anp"), ("D008", "bnp"), ("D008", "ntProBnp")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D008/paragraph/13" .unresolved (some (2, 1))
-    [("D008", "ntx"), ("D008", "osteocalcin"), ("D008", "urineDpd")] true (some false),
+    [("D008", "ntx"), ("D008", "osteocalcin"), ("D008", "urineDpd")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D008/paragraph/15" .unresolved (some (2, 1))
-    [("D008", "ntx"), ("D008", "osteocalcin"), ("D008", "tracp5b"), ("D008", "urineDpd")] true (some false),
+    [("D008", "ntx"), ("D008", "osteocalcin"), ("D008", "tracp5b"), ("D008", "urineDpd")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D008/paragraph/16" .unresolved (some (2, 1))
-    [("D007", "alpIsoenzymesPag"), ("D008", "bap"), ("D008", "intactPinp"), ("D008", "pinp")] true (some false),
+    [("D007", "alpIsoenzymesPag"), ("D008", "bap"), ("D008", "intactPinp"), ("D008", "pinp")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D008/paragraph/18" .unresolved (some (2, 1))
-    [("D008", "betaCtx"), ("D008", "urineBetaCtx")] true (some false),
+    [("D008", "betaCtx"), ("D008", "urineBetaCtx")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D008/paragraph/19" .simultaneous none
-    [("D008", "estradiol"), ("D008", "estriol"), ("D008", "estrogenQuantitative"), ("D008", "estrogenSemiquantitative")] true (some true),
+    [("D008", "estradiol"), ("D008", "estriol"), ("D008", "estrogenQuantitative"), ("D008", "estrogenSemiquantitative")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D008/paragraph/25" .unresolved (some (2, 1))
-    [("D008", "metanephrine"), ("D008", "normetanephrine")] true (some false),
+    [("D008", "metanephrine"), ("D008", "normetanephrine")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D008/paragraph/26/i" .unresolved (some (2, 1))
-    [("D008", "igfbp3"), ("D008", "somatomedinC")] true (some false),
+    [("D008", "igfbp3"), ("D008", "somatomedinC")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D008/paragraph/27/i" .unresolved (some (2, 1))
-    [("D008", "freeMetanephrineFractions"), ("D008", "metanephrine"), ("D008", "metanephrineFractions"), ("D008", "normetanephrine")] true (some false),
+    [("D008", "freeMetanephrineFractions"), ("D008", "metanephrine"), ("D008", "metanephrineFractions"), ("D008", "normetanephrine")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/3" .unresolved (some (2, 1))
-    [("D009", "3"), ("D009", "7")] true (some false),
+    [("D009", "3"), ("D009", "7")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/5" .unresolved (some (2, 1))
-    [("D009", "11"), ("D009", "28")] true (some false),
+    [("D009", "11"), ("D009", "28")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/8" .simultaneous (some (2, 1))
-    [("D009", "12"), ("D009", "21")] true (some false),
+    [("D009", "12"), ("D009", "21")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/10/i" .unresolved (some (2, 1))
-    [("D009", "18"), ("D009", "6")] true (some false),
+    [("D009", "18"), ("D009", "6")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/15" .unresolved (some (2, 1))
-    [("D009", "14"), ("D009", "24")] true (some false),
+    [("D009", "14"), ("D009", "24")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/20/u" .unresolved (some (2, 1))
-    [("D009", "17"), ("D009", "31"), ("D009", "32"), ("D009", "9")] true (some false),
+    [("D009", "17"), ("D009", "31"), ("D009", "32"), ("D009", "9")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/21/e" .unresolved (some (2, 1))
-    [("D009", "17"), ("D009", "32")] true (some false),
+    [("D009", "17"), ("D009", "32")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/21/u" .unresolved (some (2, 1))
-    [("D009", "32"), ("D009", "9")] true (some false),
+    [("D009", "32"), ("D009", "9")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D009/paragraph/24/i" .unresolved (some (2, 1))
-    [("D009", "15"), ("D009", "3"), ("D009", "35"), ("D009", "7")] true (some false),
+    [("D009", "15"), ("D009", "3"), ("D009", "35"), ("D009", "7")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D011/paragraph/4/u" .series (some (3, 1))
-    [("D011", "pf4IgG"), ("D011", "pf4IgGmA"), ("D011", "pf4Qualitative")] true (some false),
+    [("D011", "pf4IgG"), ("D011", "pf4IgGmA"), ("D011", "pf4Qualitative")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D012/paragraph/2" .unresolved (some (2, 1))
-    [("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi")] true (some false),
+    [("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D012/paragraph/4" .simultaneous (some (2, 1))
-    [("D012", "stoolAdenovirus"), ("D012", "stoolRotavirusQual"), ("D012", "stoolRotavirusQuant")] true (some false),
+    [("D012", "stoolAdenovirus"), ("D012", "stoolRotavirusQual"), ("D012", "stoolRotavirusQuant")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/12" .simultaneous none
-    [("D012", "rapidGroupAStrep"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true),
+    [("D012", "rapidGroupAStrep"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/23" .unresolved (some (2, 1))
-    [("D012", "pneumoniaeIgA"), ("D012", "pneumoniaeIgG"), ("D012", "pneumoniaeIgM")] true (some false),
+    [("D012", "pneumoniaeIgA"), ("D012", "pneumoniaeIgG"), ("D012", "pneumoniaeIgM")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/28" .unresolved (some (2, 1))
-    [("D012", "ecoliO157Antibody"), ("D012", "ecoliO157Antigen"), ("D018", "gastrointestinal")] true (some false),
+    [("D012", "ecoliO157Antibody"), ("D012", "ecoliO157Antigen"), ("D018", "gastrointestinal")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/30" .unresolved none
-    [("D012", "ecoliSerotype"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true),
+    [("D012", "ecoliSerotype"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D012/paragraph/31/i" .unresolved (some (2, 1))
-    [("D012", "pneumococcusCapsule"), ("D012", "pneumococcusWall")] true (some false),
+    [("D012", "pneumococcusCapsule"), ("D012", "pneumococcusWall")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D012/paragraph/32" .simultaneous none
-    [("D012", "gonococcusAntigen"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true),
+    [("D012", "gonococcusAntigen"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D012/paragraph/34" .unresolved none
-    [("D012", "herpesAntigen"), ("D012", "herpesCornea"), ("D012", "herpesGenital"), ("D012", "herpesSkin")] true (some false),
+    [("D012", "herpesAntigen"), ("D012", "herpesCornea"), ("D012", "herpesGenital"), ("D012", "herpesSkin")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/36" .unresolved (some (2, 1))
-    [("D012", "arabinitol"), ("D012", "aspergillusAntigen"), ("D012", "aspergillusIgG"), ("D012", "betaGlucan"), ("D012", "candidaQual"), ("D012", "candidaQuant"), ("D012", "candidaSemi"), ("D012", "cryptococcusQual"), ("D012", "cryptococcusSemi")] true (some false),
+    [("D012", "arabinitol"), ("D012", "aspergillusAntigen"), ("D012", "aspergillusIgG"), ("D012", "betaGlucan"), ("D012", "candidaQual"), ("D012", "candidaQuant"), ("D012", "candidaSemi"), ("D012", "cryptococcusQual"), ("D012", "cryptococcusSemi")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/38/i" .virus (some (2, 1))
-    [] true (some false),
+    [] true (some false)
+    (outsideReason := some .key),
   entry "notice/D012/paragraph/38/u" .unresolved (some (2, 1))
-    [("D012", "classSpecificTiter"), ("D012", "viralTiter")] true (some false),
+    [("D012", "classSpecificTiter"), ("D012", "viralTiter")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D012/paragraph/43/i" .unresolved (some (2, 1))
-    [("D012", "pertussisAntigen"), ("D023", "pertussisGroup"), ("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")] true (some false),
+    [("D012", "pertussisAntigen"), ("D023", "pertussisGroup"), ("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D012/paragraph/47/i" .unresolved none
-    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "influenzaAntigen")] true (some true),
+    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "influenzaAntigen")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D012/paragraph/48/e" .unresolved (some (2, 1))
-    [("D012", "dengueAntigen"), ("D012", "dengueCombo")] true (some false),
+    [("D012", "dengueAntigen"), ("D012", "dengueCombo")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D012/paragraph/53/i" .unresolved none
-    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "rsAntigen")] true (some true),
+    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "rsAntigen")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D012/paragraph/54/i" .unresolved none
-    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "influenzaAntigen"), ("D012", "rsAntigen")] true (some true),
+    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "influenzaAntigen"), ("D012", "rsAntigen")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D012/paragraph/56" .unresolved (some (2, 1))
-    [("D012", "toxoplasmaAntibody"), ("D012", "toxoplasmaAvidity")] true (some false),
+    [("D012", "toxoplasmaAntibody"), ("D012", "toxoplasmaAvidity")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D012/paragraph/59" .unresolved none
-    [("D012", "hiv1WesternBlot"), ("D012", "hiv2WesternBlot"), ("D012", "hivSpecific")] true (some true),
+    [("D012", "hiv1WesternBlot"), ("D012", "hiv2WesternBlot"), ("D012", "hivSpecific")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D013/paragraph/5" .simultaneous (some (2, 1))
     [("D013", "hbcAntibody"), ("D013", "hbcIgM")] true (some false),
   entry "notice/D013/paragraph/6" .simultaneous (some (2, 1))
     [("D013", "haAntibody"), ("D013", "haIgM")] true (some false),
   entry "notice/D013/paragraph/8" .simultaneous (some (2, 1))
-    [("D013", "hbcrAntigen"), ("D023", "hbvQuantity")] true (some false),
+    [("D013", "hbcrAntigen"), ("D023", "hbvQuantity")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D014/paragraph/1" .unresolved (some (3, 2))
-    [("D014", "c1q"), ("D014", "galactoseQual"), ("D014", "galactoseQuant"), ("D014", "iggRf"), ("D014", "mmp3"), ("D014", "rf"), ("D014", "rfComplex")] true (some false),
+    [("D014", "c1q"), ("D014", "galactoseQual"), ("D014", "galactoseQuant"), ("D014", "iggRf"), ("D014", "mmp3"), ("D014", "rf"), ("D014", "rfComplex")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D014/paragraph/2" .unresolved (some (2, 1))
-    [("D014", "galactoseQual"), ("D014", "galactoseQuant"), ("D014", "rf")] true (some false),
+    [("D014", "galactoseQual"), ("D014", "galactoseQuant"), ("D014", "rf")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D014/paragraph/3" .unresolved (some (2, 1))
-    [("D014", "microsomal"), ("D014", "tpo")] true (some false),
+    [("D014", "microsomal"), ("D014", "tpo")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D014/paragraph/6" .unresolved (some (2, 1))
-    [("D014", "ars"), ("D014", "jo1Qual"), ("D014", "jo1Quant"), ("D014", "jo1Semi")] true (some false),
+    [("D014", "ars"), ("D014", "jo1Qual"), ("D014", "jo1Quant"), ("D014", "jo1Semi")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D014/paragraph/7/i" .unresolved (some (2, 1))
-    [("D014", "c1q"), ("D014", "ccpQual"), ("D014", "ccpQuant"), ("D014", "galactoseQual"), ("D014", "galactoseQuant"), ("D014", "iggRf"), ("D014", "mmp3"), ("D014", "rfComplex")] true (some false),
+    [("D014", "c1q"), ("D014", "ccpQual"), ("D014", "ccpQuant"), ("D014", "galactoseQual"), ("D014", "galactoseQuant"), ("D014", "iggRf"), ("D014", "mmp3"), ("D014", "rfComplex")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D014/paragraph/8" .simultaneous (some (2, 1))
-    [("D014", "trab"), ("D014", "tsab")] true (some false),
+    [("D014", "trab"), ("D014", "tsab")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D014/paragraph/10" .unresolved (some (2, 1))
-    [("D014", "beta2Igg"), ("D014", "beta2Igm"), ("D014", "cardiolipinComplex"), ("D014", "cardiolipinIgg"), ("D014", "cardiolipinIgm")] true (some false),
+    [("D014", "beta2Igg"), ("D014", "beta2Igm"), ("D014", "cardiolipinComplex"), ("D014", "cardiolipinIgg"), ("D014", "cardiolipinIgm")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D014/paragraph/12" .unresolved (some (2, 1))
-    [("D014", "igg2Nephelometry"), ("D014", "igg2Tia")] true (some true),
+    [("D014", "igg2Nephelometry"), ("D014", "igg2Tia")] true (some true)
+    (outsideReason := some .projection),
   entry "notice/D014/paragraph/16/i" .unresolved (some (2, 1))
-    [("D014", "dsg1"), ("D014", "dsg3")] true (some false),
+    [("D014", "dsg1"), ("D014", "dsg3")] true (some false)
+    (dayRegistration := some .conditional),
   entry "notice/D014/paragraph/19/i" .unresolved (some (2, 1))
-    [("D014", "dsg1"), ("D014", "dsg3")] true (some false),
+    [("D014", "dsg1"), ("D014", "dsg3")] true (some false)
+    (dayRegistration := some .conditional),
   entry "notice/D014/paragraph/23/i" .unresolved (some (2, 1))
-    [("D014", "bp180"), ("D014", "dsg1"), ("D014", "dsg3"), ("D014", "skinCombo")] true (some false),
+    [("D014", "bp180"), ("D014", "dsg1"), ("D014", "dsg3"), ("D014", "skinCombo")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D014/paragraph/24/i" .unresolved (some (2, 1))
-    [("D014", "achr"), ("D014", "musk")] true (some false),
+    [("D014", "achr"), ("D014", "musk")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D014/paragraph/27/i" .unresolved (some (2, 1))
-    [("D014", "achr"), ("D014", "musk")] true (some false),
+    [("D014", "achr"), ("D014", "musk")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D015/paragraph/2" .unresolved (some (2, 1))
-    [("D015", "crp"), ("D015", "crpQual"), ("D015", "saa")] true (some false),
+    [("D015", "crp"), ("D015", "crpQual"), ("D015", "saa")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D015/paragraph/4/i" .specimen (some (2, 1))
-    [("D015", "drugImmunofixation"), ("D015", "specificAntiserum"), ("D015", "wholeAntiserum")] true (some false),
+    [("D015", "drugImmunofixation"), ("D015", "specificAntiserum"), ("D015", "wholeAntiserum")] true (some false)
+    (dayRegistration := some .identified),
   entry "notice/D015/paragraph/10" .unresolved (some (2, 1))
-    [("D007", "igfbp1Qualitative"), ("D015", "fibronectin")] true (some false),
+    [("D007", "igfbp1Qualitative"), ("D015", "fibronectin")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D015/paragraph/11/i" .month (some (2, 1))
-    [("D015", "scca2"), ("D015", "tarc")] true (some false),
+    [("D015", "scca2"), ("D015", "tarc")] true (some false)
+    (outsideReason := some .period),
   entry "notice/D015/paragraph/12/i" .simultaneous (some (2, 1))
-    [("D015", "lightChain"), ("D015", "specificAntiserum"), ("D015", "wholeAntiserum")] true (some false),
+    [("D015", "lightChain"), ("D015", "specificAntiserum"), ("D015", "wholeAntiserum")] true (some false)
+    (outsideReason := some .role),
   entry "primary/D017/note/unnumbered/1" .specimen (some (2, 1))
-    [("D002", "microscopy"), ("D002-2", "flow"), ("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")] true (some false),
+    [("D002", "microscopy"), ("D002-2", "flow"), ("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D017/paragraph/2" .examination none
-    [("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")],
+    [("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")]
+    (outsideReason := some .notSelection),
+  entry "notice/D017/paragraph/4" .organism none
+    [("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")] false
+    (outsideReason := some .role),
   entry "notice/D018/paragraph/1/e" .organism none
     [("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"),
-      ("D018", "other"), ("D018", "respiratory")],
+      ("D018", "other"), ("D018", "respiratory")]
+    (outsideReason := some .period),
   entry "notice/D018/paragraph/1/u" .specimen none
     [("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"),
-      ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true),
+      ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true)
+    (outsideReason := some .shape),
   entry "notice/D023/paragraph/1/a" .unresolved (some (2, 1))
-    [("D012", "trachomatisAntigen"), ("D023", "trachomatis")] true (some false),
+    [("D012", "trachomatisAntigen"), ("D023", "trachomatis")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D023/paragraph/2/a" .unresolved (some (2, 1))
-    [("D012", "gonococcusAntigen"), ("D023", "gonococcus")] true (some false),
+    [("D012", "gonococcusAntigen"), ("D023", "gonococcus")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D023/paragraph/3" .unresolved (some (2, 1))
-    [("D012", "rapidGroupAStrep"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple"), ("D023", "groupAStrep")] true (some false),
+    [("D012", "rapidGroupAStrep"), ("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "other"), ("D018", "respiratory"), ("D018", "simple"), ("D023", "groupAStrep")] true (some false)
+    (outsideReason := some .role),
   entry "notice/D023/paragraph/5/a" .unresolved (some (2, 1))
-    [("D012", "gonococcusAntigen"), ("D012", "trachomatisAntigen"), ("D023", "gonococcus"), ("D023", "gonococcusTrachomatis"), ("D023", "trachomatis")] true (some false),
+    [("D012", "gonococcusAntigen"), ("D012", "trachomatisAntigen"), ("D023", "gonococcus"), ("D023", "gonococcusTrachomatis"), ("D023", "trachomatis")] true (some false)
+    (outsideReason := some .key),
   entry "notice/D023/paragraph/10/i" .unresolved (some (2, 1))
-    [("D023", "hpv"), ("D023", "hpvSimpleGenotype")] true (some false),
+    [("D023", "hpv"), ("D023", "hpvSimpleGenotype")] true (some false)
+    (outsideReason := some .projection),
   entry "notice/D023/paragraph/16/u" .specimenOrigin none
-    [] true (some true),
+    [] true (some true)
+    (outsideReason := some .notSelection),
   entry "notice/D023/paragraph/36/i" .series none
-    [("D012", "influenzaAntigen"), ("D012", "metapneumovirusAntigen"), ("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi"), ("D012", "nonStoolAdenovirus"), ("D012", "pneumococcusCapsule"), ("D012", "rsAntigen"), ("D023", "legionella"), ("D023", "pneumoniaResistancePanel"), ("D023", "respiratorySingle")] true (some true),
+    [("D012", "influenzaAntigen"), ("D012", "metapneumovirusAntigen"), ("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi"), ("D012", "nonStoolAdenovirus"), ("D012", "pneumococcusCapsule"), ("D012", "rsAntigen"), ("D023", "legionella"), ("D023", "pneumoniaResistancePanel"), ("D023", "respiratorySingle")] true (some true)
+    (outsideReason := some .period),
   entry "notice/D023/paragraph/37/e" .series none
-    [("D012", "influenzaAntigen"), ("D012", "metapneumovirusAntigen"), ("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi"), ("D012", "nonStoolAdenovirus"), ("D012", "pertussisAntibody"), ("D012", "pertussisAntigen"), ("D012", "pertussisQual"), ("D012", "pertussisSemi"), ("D012", "pneumoniaeIgA"), ("D012", "pneumoniaeIgG"), ("D012", "pneumoniaeIgM"), ("D012", "rsAntigen"), ("D023", "respiratoryPanelWithoutCovid")] true (some true),
+    [("D012", "influenzaAntigen"), ("D012", "metapneumovirusAntigen"), ("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi"), ("D012", "nonStoolAdenovirus"), ("D012", "pertussisAntibody"), ("D012", "pertussisAntigen"), ("D012", "pertussisQual"), ("D012", "pertussisSemi"), ("D012", "pneumoniaeIgA"), ("D012", "pneumoniaeIgG"), ("D012", "pneumoniaeIgM"), ("D012", "rsAntigen"), ("D023", "respiratoryPanelWithoutCovid")] true (some true)
+    (outsideReason := some .period),
   entry "notice/D023/paragraph/37/e/u" .series none
-    [("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")],
+    [("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")]
+    (outsideReason := some .period),
   entry "notice/D023/paragraph/37/u" .series none
-    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "influenzaAntigen"), ("D012", "metapneumovirusAntigen"), ("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi"), ("D012", "nonStoolAdenovirus"), ("D012", "pertussisAntibody"), ("D012", "pertussisAntigen"), ("D012", "pertussisQual"), ("D012", "pertussisSemi"), ("D012", "pneumoniaeIgA"), ("D012", "pneumoniaeIgG"), ("D012", "pneumoniaeIgM"), ("D012", "rsAntigen"), ("D023", "respiratoryPanelCovid")] true (some true),
+    [("D012", "covidFlu"), ("D012", "covidFluRs"), ("D012", "covidQual"), ("D012", "covidQuant"), ("D012", "covidRs"), ("D012", "influenzaAntigen"), ("D012", "metapneumovirusAntigen"), ("D012", "mycoplasmaChromatography"), ("D012", "mycoplasmaFluorescence"), ("D012", "mycoplasmaQual"), ("D012", "mycoplasmaSemi"), ("D012", "nonStoolAdenovirus"), ("D012", "pertussisAntibody"), ("D012", "pertussisAntigen"), ("D012", "pertussisQual"), ("D012", "pertussisSemi"), ("D012", "pneumoniaeIgA"), ("D012", "pneumoniaeIgG"), ("D012", "pneumoniaeIgM"), ("D012", "rsAntigen"), ("D023", "respiratoryPanelCovid")] true (some true)
+    (outsideReason := some .period),
   entry "notice/D023/paragraph/37/u/ko" .series none
-    [("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")],
+    [("D023", "respiratoryPanelCovid"), ("D023", "respiratoryPanelWithoutCovid")]
+    (outsideReason := some .period),
   entry "notice/D023/paragraph/39/i" .series none
-    [] true (some true),
+    [] true (some true)
+    (outsideReason := some .key),
   entry "notice/D023-2/paragraph/1/i" .unresolved (some (2, 1))
-    [] true (some false),
+    [] true (some false)
+    (outsideReason := some .key),
   entry "notice/D023-2/paragraph/4/i" .unresolved (some (2, 1))
-    [("D023-2", "pbp2"), ("D023-2", "rapidPbp2")] true (some false),
+    [("D023-2", "pbp2"), ("D023-2", "rapidPbp2")] true (some false)
+    (outsideReason := some .role),
   entry "notice/ch2-part3-section4/general/3" .day (some (2, 1))
     [] true (some false)
+    (outsideReason := some .shape)
 ]
 
 /-- 条項の規則IDは一覧のIDと照合済み。射影は確認した区分別関数名を保持する。
@@ -415,6 +551,7 @@ def Entry.evidence (g : Entry) : Evidence :=
   | "notice/D015/paragraph/12/i" => ⟨some "同時", none, false⟩
   | "primary/D017/note/unnumbered/1" => ⟨some "同一検体", some "sedimentBacteriaGroup", false⟩
   | "notice/D017/paragraph/2" => ⟨some "各種の方法を２以上用いた場合", some "microscopyMethodsGroup", false⟩
+  | "notice/D017/paragraph/4" => ⟨some "同一起因菌", some "D017.causativeSite", false⟩
   | "notice/D018/paragraph/1/e" => ⟨some "同一起因菌", some "cultureSiteGroup", false⟩
   | "notice/D018/paragraph/1/u" => ⟨some "同一検体", some "cultureChoice", false⟩
   | "notice/D023/paragraph/1/a" => ⟨some "併用", none, false⟩
@@ -468,148 +605,11 @@ def Entry.memberGap (g : Entry) : Option String :=
     | "notice/ch2-part3-section4/general/3" => some "11種類の穿刺と同一処置に当たる相手行為の組を同定する必要がある"
     | _ => none
 
-inductive DayRegistration where
-  | identified | conditional
-  deriving DecidableEq
-
-/-- 該当する異種項目がそれぞれ一件の範囲で日次評価に接続する。 -/
-def Entry.dayRegistration (g : Entry) : Option DayRegistration :=
-  match g.id with
-  | "notice/D001/paragraph/9/i" => some .identified
-  | "notice/D004/paragraph/13/i" => some .identified
-  | "notice/D008/paragraph/3" => some .identified
-  | "notice/D008/paragraph/25" => some .identified
-  | "notice/D008/paragraph/26/i" => some .identified
-  | "notice/D008/paragraph/27/i" => some .identified
-  | "notice/D009/paragraph/3" => some .identified
-  | "notice/D009/paragraph/5" => some .identified
-  | "notice/D009/paragraph/8" => some .identified
-  | "notice/D009/paragraph/10/i" => some .identified
-  | "notice/D009/paragraph/15" => some .identified
-  | "notice/D009/paragraph/20/u" => some .identified
-  | "notice/D009/paragraph/21/e" => some .identified
-  | "notice/D009/paragraph/21/u" => some .identified
-  | "notice/D009/paragraph/24/i" => some .identified
-  | "notice/D012/paragraph/2" => some .identified
-  | "notice/D012/paragraph/31/i" => some .identified
-  | "notice/D012/paragraph/48/e" => some .identified
-  | "notice/D013/paragraph/8" => some .identified
-  | "notice/D014/paragraph/3" => some .identified
-  | "notice/D014/paragraph/8" => some .identified
-  | "notice/D014/paragraph/16/i" => some .conditional
-  | "notice/D014/paragraph/19/i" => some .conditional
-  | "notice/D014/paragraph/24/i" => some .identified
-  | "notice/D014/paragraph/27/i" => some .identified
-  | "notice/D015/paragraph/4/i" => some .identified
-  | _ => none
-
 /-- 一方が起点となる条項は、相手項目だけでは発動しない。 -/
 def Entry.dayAnchor (g : Entry) : Option ItemKey :=
   match g.id with
   | "notice/D009/paragraph/20/u" => some ("D009", "31")
   | "notice/D009/paragraph/24/i" => some ("D009", "35")
-  | _ => none
-
-inductive OutsideReason where
-  | external | key | role | period | shape | projection | notSelection
-  deriving Repr, DecidableEq
-
-/-- 工程3a-4mで日次の汎用生成の対象外とした理由。 -/
-def Entry.outsideReason (g : Entry) : Option OutsideReason :=
-  match g.id with
-  | "notice/D001/paragraph/4/i"
-  | "notice/D004/paragraph/1"
-  | "notice/D005/paragraph/3"
-  | "notice/D005/paragraph/7"
-  | "notice/D006-27/paragraph/5/e"
-  | "notice/D006-27/paragraph/6/e"
-  | "notice/D006-27/paragraph/10/u"
-  | "notice/D007/paragraph/17/e"
-  | "notice/D007/paragraph/18"
-  | "notice/D007/paragraph/26"
-  | "notice/D007/paragraph/27"
-  | "notice/D007/paragraph/30"
-  | "notice/D007/paragraph/40/i"
-  | "notice/D007/paragraph/41/i"
-  | "notice/D007/paragraph/42/i"
-  | "notice/D007/paragraph/43/u"
-  | "notice/D007/paragraph/47"
-  | "notice/D007/paragraph/48/i"
-  | "notice/D008/paragraph/15"
-  | "notice/D012/paragraph/4"
-  | "notice/D012/paragraph/12"
-  | "notice/D012/paragraph/23"
-  | "notice/D012/paragraph/28"
-  | "notice/D012/paragraph/34"
-  | "notice/D012/paragraph/36"
-  | "notice/D012/paragraph/43/i"
-  | "notice/D014/paragraph/2"
-  | "notice/D014/paragraph/6"
-  | "notice/D014/paragraph/10"
-  | "notice/D014/paragraph/23/i"
-  | "notice/D015/paragraph/2"
-  | "notice/D015/paragraph/12/i"
-  | "primary/D017/note/unnumbered/1"
-  | "notice/D023/paragraph/3"
-  | "notice/D023-2/paragraph/4/i" => some .role
-  | "notice/D001/paragraph/6/i"
-  | "notice/D003/paragraph/4/u"
-  | "notice/D004-2/paragraph/10"
-  | "notice/D006-10/paragraph/unnumbered"
-  | "notice/D006-15/paragraph/3"
-  | "notice/D006-27/paragraph/3/e"
-  | "notice/D007/paragraph/46/i" => some .external
-  | "notice/D002/paragraph/5"
-  | "notice/D007/paragraph/21"
-  | "notice/D008/paragraph/6/i"
-  | "notice/D008/paragraph/13"
-  | "notice/D008/paragraph/16"
-  | "notice/D014/paragraph/12"
-  | "notice/D015/paragraph/10"
-  | "notice/D023/paragraph/1/a"
-  | "notice/D023/paragraph/10/i" => some .projection
-  | "notice/D004-2/paragraph/7"
-  | "notice/D005/paragraph/9"
-  | "notice/D007/paragraph/22"
-  | "notice/D007/paragraph/23/i"
-  | "notice/D007/paragraph/38"
-  | "notice/D008/paragraph/7/i"
-  | "notice/D008/paragraph/18"
-  | "notice/D011/paragraph/4/u"
-  | "notice/D012/paragraph/56"
-  | "notice/D015/paragraph/11/i"
-  | "notice/D018/paragraph/1/e"
-  | "notice/D023/paragraph/36/i"
-  | "notice/D023/paragraph/37/e"
-  | "notice/D023/paragraph/37/e/u"
-  | "notice/D023/paragraph/37/u"
-  | "notice/D023/paragraph/37/u/ko" => some .period
-  | "notice/D004-2/paragraph/8"
-  | "notice/D004-2/paragraph/9"
-  | "notice/D004-2/paragraph/11"
-  | "notice/D006-22/paragraph/3"
-  | "notice/D006-24/paragraph/2"
-  | "notice/D008/paragraph/4"
-  | "notice/D012/paragraph/38/i"
-  | "notice/D012/paragraph/38/u"
-  | "notice/D014/paragraph/1"
-  | "notice/D014/paragraph/7/i"
-  | "notice/D023/paragraph/2/a"
-  | "notice/D023/paragraph/5/a"
-  | "notice/D023/paragraph/39/i"
-  | "notice/D023-2/paragraph/1/i" => some .key
-  | "primary/D006-4/note/2"
-  | "notice/D008/paragraph/19"
-  | "notice/D012/paragraph/30"
-  | "notice/D012/paragraph/32"
-  | "notice/D012/paragraph/47/i"
-  | "notice/D012/paragraph/53/i"
-  | "notice/D012/paragraph/54/i"
-  | "notice/D012/paragraph/59"
-  | "notice/D018/paragraph/1/u"
-  | "notice/ch2-part3-section4/general/3" => some .shape
-  | "notice/D017/paragraph/2"
-  | "notice/D023/paragraph/16/u" => some .notSelection
   | _ => none
 
 def indexedItems : List ItemKey := (inventory.flatMap Entry.members).eraseDups

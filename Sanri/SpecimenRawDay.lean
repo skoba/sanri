@@ -187,8 +187,10 @@ structure Input where
   /-- 当日の候補を含め、個別料を変更する別の適用群がないことの確認。
   区分別コンテキストで処理済みの条件は、その確認内容を含む。 -/
   individualStandalone : Nat → Option Bool := fun _ => none
-  /-- 重複成分で群が発動しないことを区分別の適用条件まで照合した入力。 -/
-  inactiveSelection : String → Option Bool := fun _ => none
+  /-- 対象外群の確認。空リストは非発動。発動した各群には当日実施の範囲と採用IDを渡す。 -/
+  outsideSelection : String → Option (List (List Nat × List Nat)) := fun _ => none
+  /-- 照合済みの当月・当日以前の実施。日次の点数には加えない。 -/
+  outsideMonthRows : List SpecimenSelectionGeneration.Row := []
   /-- 単位が未確定の併施群の読み。条項が同時・同一検体を指定する場合はその指定を使う。 -/
   selectionReading : String → Option CotestReading := fun _ => none
   /-- 医学的条件の確認。実施IDを昇順に揃えた群ごとに与える。 -/
@@ -197,6 +199,11 @@ structure Input where
   selectionKeep : Nat → Option Bool := fun _ => none
   /-- 一連の院内履歴を確認し、原実施群から今回算定候補を選べることを確認する。 -/
   seriesConfirmed : BundleKey → Bool := fun _ => false
+  /-- D019項1〜3の一検査で感受性を調べた菌種の確認済み識別子。 -/
+  susceptibilitySpecies : Nat → Option (List Nat) := fun _ => none
+  /-- D020の当日の採取群ID。読みは採取群ごとに指定する。 -/
+  mycobacterialGroup : Nat → Option Nat := fun _ => none
+  mycobacterialReading : Nat → Option D020.CollectionReading := fun _ => none
   /-- D006-24(2)の併施範囲を確認した当日の候補。 -/
   lungPanelTogether : List (D006Targeted.LungPanel.Context ×
     List (Performance D006Targeted.LungPanel.Counterpart)) := []
@@ -207,9 +214,6 @@ structure Input where
   collectionRows : List (Performance SpecimenCollection.Context × Nat) := []
   /-- 区分別の適格性と、採取・処置の適用群を確認済みか。 -/
   collectionFactsConfirmed : Nat → Option Bool := fun _ => none
-
-def Input.dayCollections (c : Input) : List SpecimenCollection.Context :=
-  c.collections ++ c.collectionRows.map (·.1.item)
 
 def Input.site (c : Input) : Site := c.judgment.day.site
 
@@ -507,6 +511,18 @@ private def Input.seriesGroups (c : Input) : Option (List ChoiceGroup) := do
       return [⟨source, ids, 1⟩]
   return groups.flatten
 
+private def mycobacterialTest (test : SpecimenJudgment.Test) : Bool :=
+  test.major == 20 && test.suffix == 0
+
+private def Input.mycobacterialGroups (c : Input) : Option (List ChoiceGroup) := do
+  let rows := c.rows.filter fun row => match row.item with
+    | .individual test => mycobacterialTest test
+    | _ => false
+  let keys ← rows.mapM (c.mycobacterialGroup ∘ Performance.id)
+  return keys.eraseDups.filterMap fun key =>
+    let ids := ((rows.zip keys).filter fun (_, k) => k == key).map (·.1.id)
+    if ids.length < 2 then none else some ⟨D020.collectionLimit.source, ids, 1⟩
+
 def Input.groups (c : Input) : Option (List ChoiceGroup) := do
   let morphology ← (pairs c.morphology).mapM fun (left, right) => do
     let a : Performance BloodMorphology.Item := { left with item := left.item.item }
@@ -530,8 +546,9 @@ def Input.groups (c : Input) : Option (List ChoiceGroup) := do
     let hbCore ← c.hepatitisGroups .hbCore D013.hbCoreChoice.id .hbcAntibody .hbcIgM
     let ha ← c.hepatitisGroups .ha D013.haChoice.id .haAntibody .haIgM
     let series ← c.seriesGroups
+    let mycobacterial ← c.mycobacterialGroups
     return morphology.flatten ++ calcium ++ iron ++ coagulation ++ alp ++ sediment ++ renal ++
-      lungPanel ++ cholesterol ++ protein ++ hbCore ++ ha ++ series
+      lungPanel ++ cholesterol ++ protein ++ hbCore ++ ha ++ series ++ mycobacterial
 
 /-- 指定した採否が全群に共通し、各群の必要件数を満たす場合にだけ射影する。 -/
 def resolveChoices (groups : List ChoiceGroup) (selected : Option (List Nat)) :
@@ -713,11 +730,15 @@ def Input.selectionRows (c : Input) : List SpecimenSelectionGeneration.Row :=
       | .sediment .microscopy => some ("D002", "microscopy")
       | .sediment .flow => some ("D002-2", "flow")
       | .punctureFluid .jointFluid => some ("D004", "jointFluid")
+      | .punctureFluid i => (Individual.punctureSelectionKey i).map ("D004", ·)
       | .morphology ctx => namedKey "D005" (morphologyKey ctx.item)
       | .coagulation i => namedKey "D006" (coagulationKey i)
       | .chemistry i => namedKey "D007" (chemistryKey i)
       | .ketone i => namedKey "D007" (ketoneKey i)
+      | .endocrine i => (Individual.endocrineSelectionKey i).map ("D008", ·)
+      | .tumorMarker i => (Individual.markerSelectionKey i).map ("D009", ·)
       | .hepatitis i => namedKey "D013" (hepatitisKey i)
+      | .autoantibody i => (Individual.autoantibodySelectionKey i).map ("D014", ·)
       | .individual test => do
         let assessed ← c.individualFacts row.id
         if assessed.performance == { row with item := test } then assessed.selectionKey else none
@@ -734,7 +755,7 @@ private def overlapClauses : List String :=
    "notice/D023/paragraph/5/a"]
 
 /-- 既知の構成項目から三つの重複成分の確認候補を拾う。
-同じ群の複数候補があれば、適用条件を確認するまで日次評価を保留する。 -/
+日次評価での確認と保留は `requiredOutside` と `outsideChoices` が担う。 -/
 def Input.pendingOverlap (c : Input) : List String :=
   let rows := c.selectionRows.filter fun row =>
     ["D002", "D002-2", "D004", "D012", "D017", "D018", "D023"].contains row.item.1 ||
@@ -742,7 +763,7 @@ def Input.pendingOverlap (c : Input) : List String :=
         ["procalcitoninQuantitative", "procalcitoninSemiquantitative", "presepsin"].contains row.item.2)
   if rows.length < 2 then [] else
   (SpecimenSelectionInventory.inventory.filter fun entry =>
-    overlapClauses.contains entry.id && c.inactiveSelection entry.id != some true &&
+    overlapClauses.contains entry.id &&
       let matched := SpecimenSelectionGeneration.members entry rows
       if entry.id == "primary/D017/note/unnumbered/1" then
         matched.any (fun row => row.item.1 == "D017") &&
@@ -750,32 +771,325 @@ def Input.pendingOverlap (c : Input) : List String :=
       else if entry.id == "notice/D018/paragraph/1/e" then matched.length ≥ 2
       else (matched.map Performance.item).eraseDups.length ≥ 2).map (·.id)
 
+private def divisionName (major suffix : Nat) : String :=
+  let lead := if major < 10 then "D00" else if major < 100 then "D0" else "D"
+  lead ++ toString major ++ (if suffix == 0 then "" else "-" ++ toString suffix)
+
+private def Item.division : Item → String
+  | .urine _ => "D000"
+  | .specialUrine _ => "D001"
+  | .sediment .microscopy => "D002"
+  | .sediment .flow => "D002-2"
+  | .fecal _ => "D003"
+  | .punctureFluid _ => "D004"
+  | .tumorTissue _ => "D004-2"
+  | .morphology _ => "D005"
+  | .coagulation _ => "D006"
+  | .geneticDisease _ => "D006-4"
+  | .chemistry _ | .ketone _ | .alpPag => "D007"
+  | .endocrine _ => "D008"
+  | .tumorMarker _ => "D009"
+  | .rhFactor _ => "D011"
+  | .viralTiter _ | .classTiter _ _ => "D012"
+  | .hepatitis _ => "D013"
+  | .autoantibody _ => "D014"
+  | .specificIge _ => "D015"
+  | .individual test => divisionName test.major test.suffix
+  | .other key => key.1
+
+private def Item.outsideKey : Item → Option String
+  | .specialUrine .protein => some "protein"
+  | .specialUrine .trypsinogen2 => some "trypsinogen2"
+  | .specialUrine .prostaglandinEMajorMetabolite => some "prostaglandinEMajorMetabolite"
+  | .fecal .calprotectin => some "calprotectin"
+  | .fecal .hemoglobin => some "hemoglobin"
+  | .fecal .lipids => some "lipids"
+  | .morphology c => match c.item with
+    | .completeBloodCount => some "completeBloodCount"
+    | _ => none
+  | .chemistry i => match i with
+    | .bun => some "bun"
+    | .uricAcid => some "uricAcid"
+    | .glucose => some "glucose"
+    | .ast => some "ast"
+    | .alt => some "alt"
+    | .creatinine => some "creatinine"
+    | .gammaGT => some "gammaGT"
+    | _ => none
+  | .endocrine i => match i with
+    | .bap => some "bap"
+    | .fsh => some "fsh"
+    | .lh => some "lh"
+    | .cortisol => some "cortisol"
+    | _ => Individual.endocrineSelectionKey i
+  | .punctureFluid .huhner => some "huhner"
+  | .alpPag => some "alpIsoenzymesPag"
+  | .tumorMarker i => Individual.markerSelectionKey i
+  | .rhFactor _ => some "otherRh"
+  | .specificIge _ => some "specificIge"
+  | .viralTiter _ => some "viralTiter"
+  | .classTiter _ _ => some "classSpecificTiter"
+  | .autoantibody i => match i with
+    | .rnpQuant => some "rnpQuant"
+    | .smQuant => some "smQuant"
+    | .ssbQuant => some "ssbQuant"
+    | _ => Individual.autoantibodySelectionKey i
+  | _ => none
+
+private def collectionSelectionDivision : SpecimenCollection.Item → Option String
+  | .ventricularPuncture => some "D401"
+  | .suboccipitalPuncture => some "D402"
+  | .lumbarPuncture | .thoracicPuncture | .cervicalPuncture => some "D403"
+  | .sternalMarrowPuncture | .otherMarrowPuncture => some "D404"
+  | .jointPuncture => some "D405"
+  | .maxillarySinusPuncture => some "D406"
+  | .peritonsillarTrialPuncture => some "D406-2"
+  | .renalCystHydronephrosisPuncture => some "D407"
+  | .douglasPuncture => some "D408"
+  | .lymphNodeNeedleBiopsy => some "D409"
+  | .breastBiopsyNeedle | .breastOther => some "D410"
+  | .thyroidNeedleBiopsy => some "D411"
+  | .gastricDuodenalFluid => some "D419"
+  | _ => none
+
+/-- 空の項目キーは区分だけ判明した実施として照合する。 -/
+def Input.outsideRows (c : Input) : List SpecimenSelectionGeneration.Row :=
+  let indexed := c.selectionRows
+  (c.rows.map fun row =>
+    (indexed.find? (·.id == row.id)).getD
+      { row with item := (row.item.division, row.item.outsideKey.getD "") }) ++
+  c.collectionRows.filterMap fun (row, _) =>
+    (collectionSelectionDivision row.item.item).map fun division => { row with item := (division, "") }
+
+private def outsideDivisions (g : SpecimenSelectionInventory.Entry) : List String :=
+  if g.members.isEmpty then
+    match g.id with
+    | "notice/D003/paragraph/4/u" => ["D003", "D313"]
+    | "notice/D004-2/paragraph/10" => ["D004-2", "N005"]
+    | "primary/D006-4/note/2" => ["D006-4"]
+    | "notice/D007/paragraph/38" => ["D007"]
+    | "notice/D008/paragraph/4" => ["D008"]
+    | "notice/D012/paragraph/38/i" => ["D012"]
+    | "notice/D023/paragraph/16/u" => ["D023", "D419"]
+    | "notice/D023/paragraph/39/i" => ["D023"]
+    | "notice/D023-2/paragraph/1/i" => ["D023-2", "D023"]
+    | "notice/ch2-part3-section4/general/3" =>
+      ["D401", "D402", "D403", "D404", "D405", "D406", "D406-2", "D407", "D408",
+       "D409", "D410", "D411"]
+    | _ => []
+  else g.members.map Prod.fst
+
+example : (SpecimenSelectionInventory.inventory.filter (·.outsideReason.isSome)).all
+    (fun g => !(outsideDivisions g).isEmpty) = true := by decide
+
+private def outsideMatches (g : SpecimenSelectionInventory.Entry) (broad : Bool)
+    (divisions : List String) (row : SpecimenSelectionGeneration.Row) : Bool :=
+  if g.id == "notice/D007/paragraph/38" then
+    row.item.1 == "D007" && (row.item.2 == "" || row.item.2 == "cardiacMyosinLightChainI")
+  else if broad || row.item.2 == "" then divisions.contains row.item.1
+  else g.members.contains row.item
+
+private def possibleOutside (g : SpecimenSelectionInventory.Entry)
+    (reason : SpecimenSelectionInventory.OutsideReason) (divisions : List String)
+    (today prior : List SpecimenSelectionGeneration.Row) : List Nat :=
+  let broad := g.members.isEmpty || reason == .key
+  let matchesEntry := outsideMatches g broad divisions
+  let today := today.filter matchesEntry
+  let prior := prior.filter matchesEntry
+  if g.id == "notice/D007/paragraph/38" then
+    (today.filter fun row => row.item.2 == "" ||
+      (today.filter (·.item == row.item)).length ≥ 2).map Performance.id
+  else
+    -- 日をまたぐ相手や検体検査外の相手は、当日の候補が一件でも確認を要する。
+    let crossesDay := [SpecimenSelectionInventory.UnitKind.month, .series, .week].contains g.unit
+    let minimum := if broad || reason == .shape || reason == .external || crossesDay ||
+        (today ++ prior).any (·.item.2 == "") then 1
+      else (g.cardinality.map Prod.fst).getD 1
+    if today.length + prior.length ≥ minimum then today.map Performance.id else []
+
+def Input.requiredOutside (c : Input) : List (SpecimenSelectionInventory.Entry × List Nat) :=
+  let today := c.outsideRows
+  let divisions := (today.map (·.item.1)).eraseDups
+  let prior := (c.outsideMonthRows.filter fun row =>
+    row.site.patient == c.site.patient && row.site.date.month == c.site.date.month &&
+      decide (row.site.date.key < c.site.date.key)).eraseDups
+  SpecimenSelectionInventory.inventory.filterMap fun g => do
+    let relevant := outsideDivisions g
+    if !divisions.any relevant.contains then none else
+      let reason ← g.outsideReason
+      let ids := possibleOutside g reason relevant today prior
+      if ids.isEmpty then none else some (g, ids)
+
+private def Input.outsideGroupChoices (c : Input)
+    (requirement : SpecimenSelectionInventory.Entry × List Nat) : Option (List GroupChoice) := do
+  let (g, candidates) := requirement
+  let decisions ← c.outsideSelection g.id
+  decisions.mapM fun (members, selected) =>
+    if !members.isEmpty && members.eraseDups == members &&
+        members.all candidates.contains && selected.eraseDups == selected &&
+        selected.all members.contains then
+      some ⟨⟨g.source, members, selected.length⟩, selected⟩
+    else none
+
+def Input.outsideChoices (c : Input) : Option (List GroupChoice) :=
+  (c.requiredOutside.mapM c.outsideGroupChoices).map List.flatten
+
+def Input.dayCollections (c : Input) : List SpecimenCollection.Context :=
+  c.collections ++ (c.collectionRows.filter fun (p, _) =>
+    retained (c.outsideChoices.getD []) p.id).map (·.1.item)
+
+private theorem some_of_mem_mapM {f : α → Option β} {xs : List α} {ys : List β}
+    (h : xs.mapM f = some ys) {x : α} (hx : x ∈ xs) :
+    ∃ y ∈ ys, f x = some y := by
+  induction xs generalizing ys with
+  | nil => simp at hx
+  | cons a xs ih =>
+    rw [List.mapM_cons] at h
+    obtain ⟨first, hf, tail⟩ := Option.bind_eq_some_iff.mp h
+    obtain ⟨rest, hr, he⟩ := Option.bind_eq_some_iff.mp tail
+    have eq : first :: rest = ys := Option.some.inj he
+    subst ys
+    rcases List.mem_cons.mp hx with eq | member
+    · subst x
+      exact ⟨first, by simp, hf⟩
+    · obtain ⟨y, hy, hfy⟩ := ih hr member
+      exact ⟨y, by simp [hy], hfy⟩
+
+theorem outside_confirmed (c : Input) {choices : List GroupChoice}
+    (checked : c.outsideChoices = some choices)
+    {g : SpecimenSelectionInventory.Entry} {ids : List Nat}
+    (required : (g, ids) ∈ c.requiredOutside) :
+    ∃ decisions, c.outsideSelection g.id = some decisions := by
+  obtain ⟨groups, hg, _⟩ := Option.map_eq_some_iff.mp checked
+  obtain ⟨accepted, _, ok⟩ := some_of_mem_mapM hg required
+  exact (Option.bind_eq_some_iff.mp ok).imp fun _ eq => eq.1
+
+theorem outside_choice_included (c : Input) {choices : List GroupChoice}
+    (checked : c.outsideChoices = some choices)
+    {g : SpecimenSelectionInventory.Entry} {ids members selected : List Nat}
+    (required : (g, ids) ∈ c.requiredOutside)
+    {decisions : List (List Nat × List Nat)}
+    (confirmed : c.outsideSelection g.id = some decisions)
+    (active : (members, selected) ∈ decisions) :
+    (⟨⟨g.source, members, selected.length⟩, selected⟩ : GroupChoice) ∈ choices := by
+  obtain ⟨groups, hg, eq⟩ := Option.map_eq_some_iff.mp checked
+  obtain ⟨accepted, inside, ok⟩ := some_of_mem_mapM hg required
+  simp only [Input.outsideGroupChoices, confirmed] at ok
+  obtain ⟨choice, included, projected⟩ := some_of_mem_mapM ok active
+  split at projected
+  · cases projected
+    rw [← eq]
+    exact List.mem_flatten.mpr ⟨accepted, inside, included⟩
+  · contradiction
+
+/-- 同じ実施についての二つの確認が食い違う日は保留する。 -/
+private def agreeChoices (choices : List GroupChoice) : Option (List GroupChoice) :=
+  if choices.all (fun g =>
+      decide g.group.members.Nodup && decide g.selected.Nodup &&
+        g.selected.length == g.group.count && g.selected.all g.group.members.contains &&
+        g.group.members.all (fun id => retained choices id == g.selected.contains id))
+  then some choices else none
+
+private theorem agree_choices_spec {choices accepted : List GroupChoice}
+    (h : agreeChoices choices = some accepted) :
+    accepted = choices ∧
+      Satisfies (accepted.map GroupChoice.rule) () (fun id => retained accepted id = true) := by
+  unfold agreeChoices at h
+  split at h
+  · rename_i ok
+    obtain rfl := Option.some.inj h
+    refine ⟨rfl, ?_⟩
+    intro rule member
+    obtain ⟨g, hg, rfl⟩ := List.mem_map.mp member
+    have checked := List.all_eq_true.mp ok g hg
+    simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, decide_eq_true_eq] at checked
+    refine ⟨⟨checked.1.1.1.1,
+      checked.1.1.1.2, checked.1.1.2,
+      fun id hi => List.contains_iff_mem.mp (checked.1.2 id hi)⟩, ?_⟩
+    intro id hi
+    change retained choices id = true ↔ id ∈ g.selected
+    rw [checked.2 id hi, List.contains_iff_mem]
+  · contradiction
+
+private def checkedRegisteredChoice (c : Input) (source : SourceRef)
+    (group : SpecimenSelectionGeneration.Instance) : Option GroupChoice :=
+  if group.checkSelection c.selectionKeep then
+    let ids := group.members.map Performance.id
+    let keep := ids.filter fun id => c.selectionKeep id == some true
+    some ⟨⟨source, ids, keep.length⟩, keep⟩
+  else none
+
+private theorem registered_choice_sound (c : Input) (source : SourceRef)
+    (group : SpecimenSelectionGeneration.Instance) (choice : GroupChoice)
+    (checked : checkedRegisteredChoice c source group = some choice)
+    (keep : Nat → Bool) (realizes : ∀ id ∈ choice.group.members, keep id = true ↔ id ∈ choice.selected) :
+    group.Permits keep := by
+  unfold checkedRegisteredChoice at checked
+  split at checked
+  · rename_i ok
+    obtain rfl := Option.some.inj checked.symm
+    have checkedKeep := SpecimenSelectionGeneration.checkSelection_sound group c.selectionKeep ok
+    have agrees (row : SpecimenSelectionGeneration.Row) (member : row ∈ group.members) :
+        keep row.id = (c.selectionKeep row.id == some true) := by
+      have idMember : row.id ∈ group.members.map Performance.id :=
+        List.mem_map.mpr ⟨row, member, rfl⟩
+      have agrees := realizes row.id idMember
+      simp only [List.mem_filter, idMember, true_and] at agrees
+      exact Bool.eq_iff_iff.mpr agrees
+    have filtered :
+        group.members.filter (fun row => keep row.id) =
+          group.members.filter (fun row => c.selectionKeep row.id == some true) :=
+      List.filter_congr agrees
+    cases h : group.direction with
+    | principal =>
+      simpa only [SpecimenSelectionGeneration.Instance.Permits, h, filtered] using checkedKeep
+    | retain item =>
+      simp only [SpecimenSelectionGeneration.Instance.Permits, h] at checkedKeep ⊢
+      exact ⟨by rw [filtered]; exact checkedKeep.1,
+        fun row member => (agrees row member).trans (checkedKeep.2 row member)⟩
+  · contradiction
+
+def Input.registrationRows (c : Input) : List SpecimenSelectionGeneration.Row :=
+  let keys := registeredSelectionKeys.flatMap Prod.snd
+  c.selectionRows.filter fun row => keys.contains row.item
+
+def Input.generateRegistered (c : Input) (entry : SpecimenSelectionInventory.Entry) :=
+  (SpecimenSelectionGeneration.generateRegistered entry c.registrationRows
+    (fun id => (c.selectionReading id).map CotestReading.generationReading)
+    c.selectionCondition).toOption
+
 /-- 構成を照合した群を日次に渡す。適用条件と採否は未確認なら保留する。 -/
 def Input.registeredChoices (c : Input) : Option (List GroupChoice) := do
-  let keys := registeredSelectionKeys.flatMap Prod.snd
-  let rows := c.selectionRows.filter fun row => keys.contains row.item
-  if (rows.map Performance.item).eraseDups.length < 2 then return []
+  if (c.registrationRows.map Performance.item).eraseDups.length < 2 then return []
   let entries := SpecimenSelectionInventory.inventory.filter (·.dayRegistration.isSome)
   let groups ← entries.mapM fun entry => do
-    let groups ← (SpecimenSelectionGeneration.generateRegistered entry rows
-      (fun id => (c.selectionReading id).map CotestReading.generationReading)
-      c.selectionCondition).toOption
-    groups.mapM fun group =>
-      if group.checkSelection c.selectionKeep then
-        let ids := group.members.map Performance.id
-        let keep := ids.filter fun id => c.selectionKeep id == some true
-        some ⟨⟨entry.source, ids, keep.length⟩, keep⟩
-      else none
+    let groups ← c.generateRegistered entry
+    groups.mapM (checkedRegisteredChoice c entry.source)
   return groups.flatten
 
-/-- 照合済みの共通採否とD007(9)が指定する採否を、既存の日次の選択に合流させる。 -/
-def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
+private theorem registered_choice_included (c : Input) {choices : List GroupChoice}
+    (checked : c.registeredChoices = some choices)
+    (enough : ¬ (c.registrationRows.map Performance.item).eraseDups.length < 2)
+    {entry : SpecimenSelectionInventory.Entry}
+    (registered : entry ∈ SpecimenSelectionInventory.inventory.filter (·.dayRegistration.isSome))
+    {groups : List SpecimenSelectionGeneration.Instance}
+    (generated : c.generateRegistered entry = some groups)
+    {group : SpecimenSelectionGeneration.Instance} (member : group ∈ groups) :
+    ∃ choice ∈ choices, checkedRegisteredChoice c entry.source group = some choice := by
+  simp only [Input.registeredChoices, enough, ite_false] at checked
+  obtain ⟨accepted, bound, eq⟩ := Option.bind_eq_some_iff.mp checked
+  obtain ⟨localChoices, inside, confirmed⟩ := some_of_mem_mapM bound registered
+  simp only [generated] at confirmed
+  obtain ⟨choice, included, projected⟩ := some_of_mem_mapM confirmed member
+  rw [← Option.some.inj eq]
+  exact ⟨choice, List.mem_flatten.mpr ⟨localChoices, inside, included⟩, projected⟩
+
+private def Input.ketoneChoices (c : Input) : Option (List GroupChoice) := do
   let rows := c.ketones
-  let registered ← c.registeredChoices
   if ![.ketoneBodies, .ketoneFractions].all (fun item => rows.any (·.item == item)) then
-    return registered
+    return []
   let groups ← generateGroups "notice/D007/paragraph/9" rows ketoneKey "D007" c.ketoneReading
-  let ketones ← groups.mapM fun group => do
+  groups.mapM fun group => do
     let .retain retainedKey := group.direction | none
     let [first, second] := group.members | none
     let other ← rows.find? fun row =>
@@ -785,21 +1099,24 @@ def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
     let existing ← chemistryPriorityGroup other retained
     let projected ← groupProjection group existing.group
     return ⟨projected, [retained.id]⟩
+
+/-- 照合済みの共通採否とD007(9)が指定する採否を、既存の日次の選択に合流させる。 -/
+def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
+  let registered ← c.registeredChoices
+  let ketones ← c.ketoneChoices
   return registered ++ ketones
 
 theorem ketone_priority_iff (choice : BloodChemistryFurther.Choice) :
     BloodChemistryFurther.Pair.ketones.rule.holds true choice ↔ choice = .second := by
   simp [BloodChemistryFurther.Pair.rule, BloodChemistryFurther.Pair.permits]
 
-private def Input.resolveDayChoices (c : Input) (selected : Option (List Nat)) :
+def Input.resolveDayChoices (c : Input) (selected : Option (List Nat)) :
     Option (List GroupChoice) := do
   let openGroups ← c.groups
   let directed ← c.directedChoices
-  if directed.isEmpty then return ← resolveChoices openGroups selected
   let free ← resolveChoices openGroups selected
-  let groups := openGroups ++ directed.map GroupChoice.group
-  let ids := ((free ++ directed).flatMap GroupChoice.selected).eraseDups
-  resolveChoices groups (some ids)
+  let outside ← c.outsideChoices
+  agreeChoices (free ++ directed ++ outside)
 
 private def fixedCharge (points : Nat) : Charge :=
   ⟨(· = points), points, rfl, fun _ h => h⟩
@@ -839,10 +1156,12 @@ private def Input.tests (c : Input) (choices : List GroupChoice) : List DayTest 
   (c.sediment.map fun p => c.test p.id (UrineSediment.judgmentTest p.item)
     (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
   (c.fecal.map fun p =>
-    c.test p.id (D003.judgmentTest { performance := p, d017BacteriaOrProtozoa := none }) (some true)) ++
+    c.test p.id (D003.judgmentTest { performance := p, d017BacteriaOrProtozoa := none })
+      (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
   (c.punctureFluid.filterMap fun p =>
     (c.punctureFluidFacts p).map fun (_, category) =>
-      c.test p.id (D004.judgmentTest p.item category) (some true)) ++
+      c.test p.id (D004.judgmentTest p.item category)
+        (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
   (c.morphology.map fun p => c.test p.id (p.item.item.judgmentTest false)
     (if retained choices p.id then some true else c.excludedJudgmentCandidate)) ++
   (c.chemistry.map fun p => c.test p.id (D007.Item.judgmentTest ⟨.draw, p.item⟩)
@@ -895,11 +1214,23 @@ theorem assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKe
     (hb : row ∈ assignedMembers Input.assignment c.rows b) : a = b :=
   assigned_members_disjoint _ _ ha hb
 
+private def susceptibilityTest (test : SpecimenJudgment.Test) : Bool :=
+  test.major == 19 && test.suffix == 0 && [1, 2, 3].contains test.number
+
 /-- D006-27の二系列も、個別評価証拠を原実施に照合してから同じ割当てに渡す。 -/
 def Input.bundleAssignment (c : Input) (row : Performance Item) : Option BundleKey := do
   match row.item with
   | .individual test =>
-    if (seriesRule test).isSome then Input.assignment row else
+    if susceptibilityTest test then do
+      let species ← c.susceptibilitySpecies row.id
+      let count := species.eraseDups.length
+      if count == 0 || min 3 count != test.number then none else
+        some ⟨⟨19, 0, .examination⟩, row.site, row.id⟩
+    else if mycobacterialTest test then do
+      let group ← c.mycobacterialGroup row.id
+      let _ ← c.mycobacterialReading group
+      return ⟨⟨20, 0, .collection⟩, row.site, group⟩
+    else if (seriesRule test).isSome then Input.assignment row else
       let individual ← c.individualFacts row.id
       if individual.performance != { row with item := test } then none else
         let item ← individual.plasmaPanelItem
@@ -910,6 +1241,69 @@ theorem bundle_assignment_disjoint (c : Input) {row : Performance Item} {a b : B
     (ha : row ∈ assignedMembers c.bundleAssignment c.rows a)
     (hb : row ∈ assignedMembers c.bundleAssignment c.rows b) : a = b :=
   assigned_members_disjoint _ _ ha hb
+
+theorem d019_bundle_assignment (c : Input) (p : Performance D019.Item) (species : List Nat)
+    (confirmed : c.susceptibilitySpecies p.id = some species)
+    (item : p.item.number ∈ [1, 2, 3])
+    (nonempty : species.eraseDups.length ≠ 0)
+    (count : min 3 species.eraseDups.length = p.item.number) :
+    c.bundleAssignment { p with item := .individual (D019.judgmentTest p.item) } =
+      some ⟨⟨19, 0, .examination⟩, p.site, p.id⟩ := by
+  have present : species.eraseDups ≠ [] := fun h => nonempty (by simp [h])
+  simp [Input.bundleAssignment, susceptibilityTest, D019.judgmentTest,
+    confirmed, item, present, count]
+
+theorem d020_bundle_assignment (c : Input) (p : Performance D020.Item)
+    (group : Nat) (reading : D020.CollectionReading)
+    (confirmed : c.mycobacterialGroup p.id = some group)
+    (read : c.mycobacterialReading group = some reading) :
+    c.bundleAssignment { p with item := .individual (D020.judgmentTest p.item) } =
+      some ⟨⟨20, 0, .collection⟩, p.site, group⟩ := by
+  simp [Input.bundleAssignment, susceptibilityTest, mycobacterialTest, D020.judgmentTest,
+    confirmed, read]
+
+/-- 同時又は一連の採取を、指定した読みと当日の採否で確認する。 -/
+private def Input.checkMycobacterialGroups (c : Input) (choices : List GroupChoice) : Option Unit := do
+  let rows := c.rows.filter fun row => match row.item with
+    | .individual test => mycobacterialTest test
+    | _ => false
+  let keys ← rows.mapM c.bundleAssignment
+  if (pairs (rows.zip keys)).any (fun ((a, ka), (b, kb)) =>
+      ka != kb && (a.simultaneousWith b == some true || a.sameSeries b == some true)) then none else
+  for key in keys.eraseDups do
+    let members ← (assignedMembers c.bundleAssignment rows key).mapM fun row => do
+      let .individual test := row.item | none
+      let item ← match test.number with
+        | 1 => some D020.Item.liquid
+        | 2 => some D020.Item.other
+        | _ => none
+      return ({ row with item := item } : Performance D020.Item)
+    let [anchor] := members.filter (fun row => retained choices row.id) | none
+    let _ ← D020.collectionFromReading { performance := anchor } members
+      (c.mycobacterialReading key.identity)
+  return ()
+
+def Input.needsBundle (row : Performance Item) : Bool :=
+  match row.item with
+  | .tumorTissue i => i != .sensitivity
+  | .geneticDisease _ | .chemistry _ | .coagulation _ | .endocrine _ | .tumorMarker _
+  | .rhFactor _ | .hepatitis _ | .specificIge _ | .viralTiter _ | .classTiter _ _
+  | .autoantibody _ => true
+  | .individual test => (seriesRule test).isSome || susceptibilityTest test ||
+      mycobacterialTest test || (test.major == 6 && [12, 27].contains test.suffix)
+  | _ => false
+
+def Input.bundleCoverage (c : Input) : Bool :=
+  c.rows.all fun row => !Input.needsBundle row || (c.bundleAssignment row).isSome
+
+theorem bundle_coverage (c : Input) (checked : c.bundleCoverage = true)
+    {row : Performance Item} (member : row ∈ c.rows) (required : Input.needsBundle row = true) :
+    ∃ key, row ∈ assignedMembers c.bundleAssignment c.rows key := by
+  have h := List.all_eq_true.mp checked row member
+  simp only [required, Bool.not_true, Bool.false_or] at h
+  cases assigned : c.bundleAssignment row with
+  | none => simp [assigned] at h
+  | some key => exact ⟨key, by simp [assignedMembers, member, assigned]⟩
 
 /-- 採取IDで原実施を集め、指定された主検査と各実施の疾患分類からD006-4を組み立てる。 -/
 def Input.geneticAssessments (c : Input) : Option (List Individual) := do
@@ -1069,10 +1463,14 @@ private def Input.extraBundlePoints (c : Input) (choices : List GroupChoice) :
       | _ => none
   return points.flatten
 
-private def Input.individuals (c : Input) (choices : List GroupChoice) : Option (List Individual) :=
+def Input.individualRows (c : Input) (choices : List GroupChoice) :
+    List (Performance SpecimenJudgment.Test) :=
   (c.rows.filterMap fun row => match row.item with
     | .individual test => if retained choices row.id then some { row with item := test } else none
-    | _ => none).mapM fun row => do
+    | _ => none)
+
+private def Input.individuals (c : Input) (choices : List GroupChoice) : Option (List Individual) :=
+  (c.individualRows choices).mapM fun row => do
     let confirmed ←
       match c.lungPanelTogether.find? (fun pair => pair.1.performance.id == row.id) with
       | none => c.individualFacts row.id
@@ -1084,10 +1482,20 @@ private def Input.individuals (c : Input) (choices : List GroupChoice) : Option 
       some confirmed
     else none
 
+theorem individual_candidates_exclude (c : Input) (choices : List GroupChoice)
+    (row : Performance SpecimenJudgment.Test) (excluded : retained choices row.id = false) :
+    row ∉ c.individualRows choices := by
+  intro member
+  obtain ⟨p, _, projected⟩ := List.mem_filterMap.mp member
+  cases h : p.item <;> simp [h] at projected
+  obtain ⟨kept, rfl⟩ := projected
+  simp [excluded] at kept
+
 private def Input.validCollectionRows (c : Input) : Bool :=
   let ids := c.collectionRows.map (·.1.id)
   ids.eraseDups == ids && c.collectionRows.all fun (p, testId) =>
     p.site == c.site && !p.item.inpatient && c.collectionFactsConfirmed p.id == some true &&
+    !c.rows.any (·.id == p.id) &&
     (!SpecimenCollection.isSeries p.item.item || p.series == some p.item.seriesId) &&
     c.rows.any (fun row => row.id == testId &&
       (!p.specimen.isSome || row.specimen == p.specimen))
@@ -1105,6 +1513,7 @@ private def Input.individualPoints (c : Input) (rows : List Individual) : Option
     let members := (panel.filter fun p => p.1 == draw).map Prod.snd
     let items := members.map (·.performance.item)
     if items.eraseDups != items then none else some (D006PlasmaPanel.bundlePoints members).total
+  -- D019とD020では、一検査・一採取の割当てを確認した後に区分別の一群分の点数を使う。
   return (rows.filter fun i => i.plasmaPanelItem.isNone).map Individual.points ++ grouped
 
 theorem rh_rate_projection (g : D011.Context) (p : Nat) :
@@ -1162,7 +1571,7 @@ private def Input.checkedRapid (c : Input) (choices : List GroupChoice) (day : D
   day.withAssessedRapid (candidates.filterMap id)
 
 /-- 元の事実と選択を日次評価へ渡す。対応範囲外・確認不足はいずれも none。 -/
-private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
+private def Input.prepareFacts (c : Input) (choices : List GroupChoice) :
     Option (Day × List Nat) := do
   let ids := c.rows.map Performance.id
   if decide (c.judgment.status ≠ .outpatient) ||
@@ -1171,11 +1580,10 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
       !c.rows.all (fun p => p.item.supported && p.site == c.site &&
       c.eligible p.id == some true) || ids.eraseDups != ids || c.additions.site != c.site then none
   else
-    if !c.pendingOverlap.isEmpty then none else
-    let choices ← c.resolveDayChoices selected
+    let _ ← c.checkMycobacterialGroups choices
     if c.morphology.length != (c.morphology.map (·.item.item)).eraseDups.length ||
         c.urine.length > 1 then none else
-      let urine ← c.urine.mapM fun p =>
+      let urine ← (c.urine.filter fun p => retained choices p.performance.id).mapM fun p =>
         if p.performingInstitution == some p.performance.site.institution &&
             !p.analytes.isEmpty && p.method.isSome &&
             (p.arrangement == some .direct || p.arrangement == some (.contracted (some true)))
@@ -1189,14 +1597,15 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
           choice.group.members.contains p.id
         let confirmed ← c.sedimentFacts p paired
         (sedimentCharge confirmed.val).map UrineFecalTests.Charge.total
-      let fecal ← c.fecal.mapM fun p => do
+      let fecal ← (c.fecal.filter fun p => retained choices p.id).mapM fun p => do
         let confirmed ← c.fecalFacts p
         return UrineFecalTests.fecalPoints confirmed.val.performance.item
-      let punctureFluid ← c.punctureFluid.mapM fun p => do
+      let punctureFluid ← (c.punctureFluid.filter fun p => retained choices p.id).mapM fun p => do
         let (confirmed, _) ← c.punctureFluidFacts p
         D004.scheduled confirmed.val
       let sensitivity ← (c.rows.filterMap fun p => match p.item with
-        | .tumorTissue .sensitivity => some ({ p with item := .sensitivity } : Performance D004Tumor.Item)
+        | .tumorTissue .sensitivity =>
+          if retained choices p.id then some ({ p with item := .sensitivity } : Performance D004Tumor.Item) else none
         | _ => none).mapM fun p => do
           let _ ← c.tumorSensitivityFacts p
           return D004Tumor.Item.sensitivity.points
@@ -1211,15 +1620,21 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
         | _ => none
       let individuals ← c.individuals choices
       let directPoints ← c.individualPoints individuals
-      let genetic ← c.geneticAssessments
+      let genetic ← ({ c with rows := c.rows.filter (fun row => retained choices row.id) }).geneticAssessments
       if individuals.any (fun i => i.performance.item.major == 6 && i.performance.item.suffix == 4 &&
           genetic.any (fun g => g.performance.draw == i.performance.draw)) then none else
       let geneticTests ← (c.rows.filterMap fun row => match row.item with
         | .geneticDisease disease => some ({ row with item := disease } : Performance Nat)
         | _ => none).mapM fun row => do
-          let main ← genetic.find? (fun main => main.performance.draw == row.draw)
-          return c.test row.id main.performance.item
-            (if main.performance.id == row.id then some true else c.excludedJudgmentCandidate)
+          let main := genetic.find? (fun main => main.performance.draw == row.draw)
+          if retained choices row.id then
+            let chosen ← main
+            return c.test row.id chosen.performance.item
+              (if chosen.performance.id == row.id then some true else c.excludedJudgmentCandidate)
+          else
+            let test := main.map (·.performance.item)
+            let test ← test.orElse (fun _ => (c.individualFacts row.id).map (·.performance.item))
+            return c.test row.id test c.excludedJudgmentCandidate
       let execution := (draws.map fun (_, items) => BloodChemistry.pointsForItems items) ++
         morphology ++ urine ++ specialUrine ++ sediment ++ fecal ++ punctureFluid ++ sensitivity ++ extra ++ pag ++
         ketones ++ directPoints ++ genetic.map Individual.points
@@ -1229,8 +1644,14 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
       let _ ← day.judgment.points
       return (day, execution)
 
+private def Input.confirmDay (c : Input) (selected : Option (List Nat)) :
+    Option (Day × List Nat) := do
+  if !c.bundleCoverage then none else
+    let choices ← c.resolveDayChoices selected
+    c.prepareFacts choices
+
 def Input.prepare (c : Input) (selected : Option (List Nat)) : Option (Day × List Nat) :=
-  (c.prepareFacts selected).map fun (day, execution) =>
+  (c.confirmDay selected).map fun (day, execution) =>
     ({ day with execution := execution.map fixedCharge }, execution)
 
 theorem tumor_tissue_projection (g : D004Tumor.Group) (valid : g.Valid)
@@ -1308,6 +1729,127 @@ def Input.Permits (c : Input) (selected : Option (List Nat)) (r : Breakdown) : P
   ∃ prep execution day, c.prepare selected = some (prep, execution) ∧
     prep.withCollectionContexts c.dayCollections = some day ∧ day.Permits r
 
+theorem bundle_coverage_of_scope (c : Input) (selected : Option (List Nat))
+    (scope : c.Scope selected) {row : Performance Item} (member : row ∈ c.rows)
+    (required : Input.needsBundle row = true) :
+    ∃ key, row ∈ assignedMembers c.bundleAssignment c.rows key := by
+  apply bundle_coverage c _ member required
+  obtain ⟨_, prep, execution, _, prepared, _, _⟩ := scope
+  cases h : c.bundleCoverage with
+  | true => rfl
+  | false =>
+    simp [Input.prepare, Input.confirmDay, h] at prepared
+
+theorem missing_bundle_holds_day (c : Input) (selected : Option (List Nat))
+    {row : Performance Item} (member : row ∈ c.rows)
+    (required : Input.needsBundle row = true)
+    (unassigned : c.bundleAssignment row = none) : c.prepare selected = none := by
+  have unchecked : c.bundleCoverage = false := by
+    cases h : c.bundleCoverage with
+    | false => rfl
+    | true =>
+      have accepted := List.all_eq_true.mp h row member
+      simp [required, unassigned] at accepted
+  simp [Input.prepare, Input.confirmDay, unchecked]
+
+theorem unique_bundle_of_scope (c : Input) (selected : Option (List Nat))
+    (scope : c.Scope selected) {row : Performance Item} (member : row ∈ c.rows)
+    (required : Input.needsBundle row = true) :
+    ∃ key, row ∈ assignedMembers c.bundleAssignment c.rows key ∧
+      ∀ other, row ∈ assignedMembers c.bundleAssignment c.rows other → other = key := by
+  obtain ⟨key, assigned⟩ := bundle_coverage_of_scope c selected scope member required
+  exact ⟨key, assigned, fun _ other => bundle_assignment_disjoint c other assigned⟩
+
+theorem scope_realizes_choices (c : Input) (selected : Option (List Nat))
+    (scope : c.Scope selected) :
+    ∃ groups free directed outside choices,
+      c.groups = some groups ∧ resolveChoices groups selected = some free ∧
+      c.directedChoices = some directed ∧ c.outsideChoices = some outside ∧
+      c.resolveDayChoices selected = some choices ∧ choices = free ++ directed ++ outside ∧
+      Satisfies (choices.map GroupChoice.rule) () (fun id => retained choices id = true) := by
+  obtain ⟨_, prep, execution, _, prepared, _, _⟩ := scope
+  have resolved : ∃ choices, c.resolveDayChoices selected = some choices := by
+    cases h : c.resolveDayChoices selected with
+    | none => simp [Input.prepare, Input.confirmDay, h] at prepared
+    | some choices => exact ⟨choices, rfl⟩
+  obtain ⟨choices, resolved⟩ := resolved
+  cases hg : c.groups with
+  | none => simp [Input.resolveDayChoices, hg] at resolved
+  | some groups =>
+    cases hd : c.directedChoices with
+    | none => simp [Input.resolveDayChoices, hg, hd] at resolved
+    | some directed =>
+      cases hf : resolveChoices groups selected with
+      | none => simp [Input.resolveDayChoices, hg, hd, hf] at resolved
+      | some free =>
+        cases ho : c.outsideChoices with
+        | none => simp [Input.resolveDayChoices, hg, hd, ho] at resolved
+        | some outside =>
+          have h : agreeChoices (free ++ directed ++ outside) = some choices := by
+            simpa [Input.resolveDayChoices, hg, hd, hf, ho] using resolved
+          have sound := agree_choices_spec h
+          exact ⟨groups, free, directed, outside, choices, rfl, hf, rfl, rfl,
+            resolved, sound.1, sound.2⟩
+
+theorem retained_of_unrelated (choices : List GroupChoice) (id : Nat)
+    (unrelated : ∀ choice ∈ choices, id ∉ choice.group.members) :
+    retained choices id = true := by
+  simp only [retained, List.all_eq_true, Bool.or_eq_true, Bool.not_eq_true',
+    Bool.eq_false_iff, List.contains_iff_mem]
+  exact fun g hg => Or.inl (fun present => unrelated g hg (List.contains_iff_mem.mp present))
+
+theorem missing_outside_confirmation_holds_day (c : Input) (selected : Option (List Nat))
+    {g : SpecimenSelectionInventory.Entry} {ids : List Nat}
+    (required : (g, ids) ∈ c.requiredOutside)
+    (missing : c.outsideSelection g.id = none) : c.prepare selected = none := by
+  have unresolved : c.outsideChoices = none := by
+    cases h : c.outsideChoices with
+    | none => rfl
+    | some choices =>
+      obtain ⟨decisions, confirmed⟩ := outside_confirmed c h required
+      simp [missing] at confirmed
+  simp [Input.prepare, Input.confirmDay, Input.resolveDayChoices, unresolved]
+
+theorem scope_applies_outside_choice (c : Input) (selected : Option (List Nat))
+    (scope : c.Scope selected)
+    {g : SpecimenSelectionInventory.Entry} {ids members kept : List Nat}
+    (required : (g, ids) ∈ c.requiredOutside)
+    {decisions : List (List Nat × List Nat)}
+    (confirmed : c.outsideSelection g.id = some decisions)
+    (active : (members, kept) ∈ decisions) :
+    ∃ choices, c.resolveDayChoices selected = some choices ∧
+      ∀ id ∈ members, retained choices id = true ↔ id ∈ kept := by
+  obtain ⟨_, free, directed, outside, choices, _, _, _, checked, resolved, eq, satisfies⟩ :=
+    scope_realizes_choices c selected scope
+  have included := outside_choice_included c checked required confirmed active
+  let choice : GroupChoice := ⟨⟨g.source, members, kept.length⟩, kept⟩
+  have member : choice ∈ choices := by rw [eq]; simp [choice, included]
+  exact ⟨choices, resolved, (satisfies choice.rule (List.mem_map.mpr ⟨choice, member, rfl⟩)).2⟩
+
+theorem scope_satisfies_registered (c : Input) (selected : Option (List Nat))
+    (scope : c.Scope selected)
+    (enough : ¬ (c.registrationRows.map Performance.item).eraseDups.length < 2)
+    {entry : SpecimenSelectionInventory.Entry}
+    (registered : entry ∈ SpecimenSelectionInventory.inventory.filter (·.dayRegistration.isSome))
+    {groups : List SpecimenSelectionGeneration.Instance}
+    (generated : c.generateRegistered entry = some groups)
+    {group : SpecimenSelectionGeneration.Instance} (member : group ∈ groups) :
+    ∃ choices, c.resolveDayChoices selected = some choices ∧
+      group.Permits (retained choices) := by
+  obtain ⟨_, free, directed, outside, choices, _, _, hd, _, resolved, eq, satisfies⟩ :=
+    scope_realizes_choices c selected scope
+  unfold Input.directedChoices at hd
+  obtain ⟨registeredChoices, checked, rest⟩ := Option.bind_eq_some_iff.mp hd
+  obtain ⟨choice, included, projected⟩ :=
+    registered_choice_included c checked enough registered generated member
+  obtain ⟨ketones, _, appended⟩ := Option.bind_eq_some_iff.mp rest
+  have inDirected : choice ∈ directed := by
+    rw [← Option.some.inj appended]
+    exact List.mem_append.mpr (Or.inl included)
+  have inChoices : choice ∈ choices := by rw [eq]; simp [inDirected]
+  exact ⟨choices, resolved, registered_choice_sound c entry.source group choice projected _
+    (satisfies choice.rule (List.mem_map.mpr ⟨choice, inChoices, rfl⟩)).2⟩
+
 theorem determines (c : Input) (selected : Option (List Nat)) (scope : c.Scope selected) :
     ∃ r, c.Permits selected r ∧ ∀ other, c.Permits selected other → other = r := by
   obtain ⟨_, prep, execution, day, hp, hd, h⟩ := scope
@@ -1339,7 +1881,7 @@ theorem allowed_finite (c : Input) :
   have resolved : ∃ choices, c.resolveDayChoices selected = some choices := by
     cases h : c.resolveDayChoices selected with
     | none =>
-      simp [Input.prepare, Input.prepareFacts, h] at prepared
+      simp [Input.prepare, Input.confirmDay, h] at prepared
     | some choices => exact ⟨choices, rfl⟩
   obtain ⟨choices, resolved⟩ := resolved
   cases hg : c.groups with
@@ -1356,7 +1898,7 @@ theorem allowed_finite (c : Input) :
       have eq : c.resolveDayChoices candidate = c.resolveDayChoices selected := by
         cases hd : c.directedChoices <;> simp [Input.resolveDayChoices, hg, hd, hf, same]
       have prepareEq : c.prepare candidate = c.prepare selected := by
-        simp [Input.prepare, Input.prepareFacts, eq]
+        simp only [Input.prepare, Input.confirmDay, eq]
       have scope' : c.Scope candidate :=
         ⟨supported, prep, execution, day, prepareEq.trans prepared, collected, confirmed⟩
       have allowed' : c.Permits candidate r := by
@@ -1485,6 +2027,14 @@ private def base : Input where
   emergency := fun _ => none
   rapid := fun _ => none
 
+private def confirmOutside (c : Input) (id : String)
+    (decision : List (List Nat × List Nat)) : Input :=
+  { c with outsideSelection := fun clause =>
+      if clause == id then some decision else c.outsideSelection clause }
+
+private def confirmInactive (c : Input) (ids : List String) : Input :=
+  ids.foldl (fun day id => confirmOutside day id []) c
+
 private def urineDaySite : Site := site
 
 private def urineDayBase : Input :=
@@ -1515,7 +2065,7 @@ private theorem stoolEligible : D003.Eligible
   repeat' first | apply And.intro | exact True.intro | rfl | (intro h; contradiction)
 
 private def urineAndStool : Input :=
-  { urineDayBase with
+  { (confirmInactive urineDayBase ["notice/D003/paragraph/4/u"]) with
     rows := [{ urineProtein with item := .specialUrine .protein }, { stool with item := .fecal .lipids }]
     specialUrineFacts := fun p => if h : urineProtein = p then
       some ⟨{ performance := urineProtein }, h, urineProteinEligible⟩ else none
@@ -1596,12 +2146,16 @@ private def pairedSediment : Input :=
         some ⟨flowContext paired, hp, rfl, rfl, hp ▸ flowInScope paired⟩
       else microscopyAndPuncture.sedimentFacts p paired }
 
+private def flowDay : Input :=
+  { (confirmOutside
+    (confirmInactive pairedSediment ["primary/D017/note/unnumbered/1"])
+    "notice/D002/paragraph/5" [([3, 5], [5])]) with sedimentPaired := some true }
+
 example :
-    let paired := { pairedSediment with sedimentPaired := some true }
     pairedSediment.groups = none ∧
-      paired.groups.map (List.map ChoiceGroup.members) = some [[3, 5]] ∧
-      (paired.prepare none).isNone ∧
-      (paired.withoutAdditions (some [5])).map Breakdown.execution = some [7, 24, 25, 20] := by decide
+      flowDay.groups.map (List.map ChoiceGroup.members) = some [[3, 5]] ∧
+      (flowDay.prepare none).isNone ∧
+      (flowDay.withoutAdditions (some [5])).map Breakdown.execution = some [7, 24, 25, 20] := by decide
 
 example :
     let rows : List (Performance Item) :=
@@ -1639,13 +2193,19 @@ private theorem sensitivityEligible : D004Tumor.Eligible sensitivityContext := b
   · intro impossible
     cases impossible
 
-example :
-    let c : Input := { urineAndStool with
-      rows := urineAndStool.rows ++ [{ sensitivityRow with item := .tumorTissue .sensitivity }]
-      tumorSensitivityFacts := fun p =>
-        if h : sensitivityRow = p then some (⟨sensitivityContext, h, sensitivityEligible⟩, .biochemicalII)
-        else none }
-    (c.withoutAdditions none).map Breakdown.execution = some [7, 25, 2500] := by decide
+private def sensitivityDay : Input :=
+  let checked := confirmInactive urineAndStool
+    ["notice/D004-2/paragraph/7", "notice/D004-2/paragraph/8", "notice/D004-2/paragraph/9",
+     "notice/D004-2/paragraph/10", "notice/D004-2/paragraph/11",
+     "notice/D006-22/paragraph/3", "notice/D006-24/paragraph/2"]
+  { checked with
+    rows := urineAndStool.rows ++ [{ sensitivityRow with item := .tumorTissue .sensitivity }]
+    tumorSensitivityFacts := fun p =>
+      if h : sensitivityRow = p then some (⟨sensitivityContext, h, sensitivityEligible⟩, .biochemicalII)
+      else none }
+
+example : (sensitivityDay.withoutAdditions none).map Breakdown.execution =
+    some [7, 25, 2500] := by decide
 
 private def chemistryRows (items : List BloodChemistry.Item) : List (Performance Item) :=
   items.zipIdx.map fun (i, j) =>
@@ -1662,19 +2222,20 @@ private def raw429 : Input :=
       chemistryRows [.bun, .creatinine, .ast, .alt, .totalProtein, .albumin, .gammaGT, .uricAcid]
               collections := [{ item := .venousBlood, ageYears := 40 }] }
 
-private def rawDifferential : Input :=
+private def rawDifferential (principal : Nat := 1) : Input :=
   let urine : D000.Context :=
     ⟨⟨3, site, (), none, none, none, none⟩, some site.institution, some .strip, [.ph], some .direct⟩
-  { base with rows := [morphologyRow 1 .eosinophilCount, morphologyRow 2 .automatedDifferential,
+  { (confirmOutside base "notice/D005/paragraph/3" [([1, 2], [principal])]) with
+    rows := [morphologyRow 1 .eosinophilCount, morphologyRow 2 .automatedDifferential,
     { id := 3, site, item := .urine urine }] ++ chemistryRows [.bun, .uricAcid, .glucose, .ast, .alt] }
 
 private def total (c : Input) (selected : Option (List Nat)) : Option Nat :=
   (c.withoutAdditions selected).map (·.total.specimenWithCollection)
 
 example : total raw429 none = some 429 := by decide
-example : total rawDifferential (some [1]) = some 405 := by decide
-example : total rawDifferential (some [2]) = some 403 := by decide
-example : total rawDifferential none = none := by decide
+example : total (rawDifferential 1) (some [1]) = some 405 := by decide
+example : total (rawDifferential 2) (some [2]) = some 403 := by decide
+example : total (rawDifferential 1) none = none := by decide
 
 example : total { raw429 with rows := raw429.rows.map fun p => { p with draw := none } } none =
     none := by decide
@@ -1688,7 +2249,7 @@ private def twoGroups : Input :=
   let rows : List (Performance Item) :=
     [{ id := 20, site, item := .chemistry .calcium, draw := some 1, simultaneous := some 1 },
      { id := 21, site, item := .chemistry .ionizedCalcium, draw := some 1, simultaneous := some 1 }]
-  { rawDifferential with
+  { (rawDifferential 1) with
     rows := rawDifferential.rows ++ rows
     collections := raw429.collections }
 
@@ -1711,7 +2272,8 @@ example :
     (some 3, some 413, some 1479) := by decide
 
 private def mixedRawDay : Input :=
-  { urineAndStool with
+  { (confirmOutside (confirmInactive urineAndStool ["notice/D008/paragraph/4"])
+      "notice/D008/paragraph/16" [([70, 71], [70])]) with
     rows := urineAndStool.rows ++
       (multiDivision.rows.filter (fun p => p.id != 1 && p.id != 2)).map
         (fun p => { p with site := urineDaySite }) ++
@@ -1748,7 +2310,10 @@ private def cultureExample : Individual := by
 
 private def sevenCategoryDay : Input :=
   let individuals := [leukemiaExample, cultureExample]
-  { mixedRawDay with
+  { (confirmInactive mixedRawDay
+      ["notice/D012/paragraph/12", "notice/D012/paragraph/30", "notice/D012/paragraph/32",
+       "notice/D018/paragraph/1/e", "notice/D018/paragraph/1/u",
+       "notice/ch2-part3-section4/general/3"]) with
     rows := mixedRawDay.rows ++
       [{ id := 81, site := urineDaySite, item := .endocrine .fsh, draw := some 1 }] ++ individuals.map (fun i =>
       { i.performance with item := .individual i.performance.item })
@@ -1767,6 +2332,29 @@ example :
     (sevenCategoryDay.withoutAdditions (some [20, 33, 70])).map
       (fun r => (r.execution, r.judgment, r.collection, r.total.specimenWithCollection)) =
     some ([93, 26, 7, 25, 600, 290, 105, 180, 2520, 377], 841, [40, 312], 5416) := by decide
+
+private theorem seven_category_scope : sevenCategoryDay.Scope (some [20, 33, 70]) := by
+  refine ⟨?_, _, _, _, rfl, rfl, ?_⟩
+  · exact fun _ membership => List.all_eq_true.mp (by decide :
+      sevenCategoryDay.rows.all (fun p => p.item.supported) = true) _ membership
+  · refine ⟨rfl, ⟨rfl, rfl, ?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+    · unfold SpecimenJudgment.DailyJudgment.Known
+      decide
+    · intro f h
+      cases h
+    · intro e h
+      cases h
+    · intro e h
+      cases h
+    · intro h
+      cases h
+    · intro h
+      cases h
+
+theorem seven_category_day_determines :
+    ∃ r, sevenCategoryDay.Permits (some [20, 33, 70]) r ∧
+      ∀ other, sevenCategoryDay.Permits (some [20, 33, 70]) other → other = r :=
+  determines sevenCategoryDay (some [20, 33, 70]) seven_category_scope
 
 private def generatedGroupsDay : Input :=
   let newRows : List (Performance Item) :=
@@ -1869,7 +2457,9 @@ private def coreDnaExample : Individual := by
 
 private def registeredGroupsDay (principal : Nat) : Input :=
   let added := [coreAntigenExample, coreDnaExample]
-  let previous := generatedGroupsDay
+  let previous := confirmInactive generatedGroupsDay
+    ["notice/D023/paragraph/2/a", "notice/D023/paragraph/5/a",
+     "notice/D023/paragraph/16/u", "notice/D023/paragraph/39/i", "notice/D023-2/paragraph/1/i"]
   { previous with
     rows := previous.rows ++ added.map (fun i => { i.performance with item := .individual i.performance.item })
     individualFacts := fun id => (added.find? (·.performance.id == id)).orElse (fun _ =>
@@ -1993,22 +2583,62 @@ example :
     let row : Performance Item := { id := 1, site, item := .specificIge none, draw := some 1 }
     total { base with rows := [row] } none = none := by decide
 
-example :
-    let rows : List (Performance Item) :=
-      [{ id := 1, site, item := .endocrine .fsh, draw := some 1 },
-       { id := 2, site, item := .endocrine .lh, draw := some 1 },
-       { id := 3, site, item := .endocrine .cortisol, draw := some 1 },
-       { id := 4, site, item := .tumorMarker ⟨3, 0⟩, draw := some 1 },
-       { id := 5, site, item := .tumorMarker ⟨4, 0⟩, draw := some 1 }]
-    (({ base with rows } : Input).withoutAdditions none).map Breakdown.execution =
-      some [410, 230] := by decide
+private def markerDay : Input :=
+  let checked := confirmInactive base ["notice/D001/paragraph/4/i", "notice/D008/paragraph/4"]
+  { checked with rows :=
+    [{ id := 1, site, item := .endocrine .fsh, draw := some 1 },
+     { id := 2, site, item := .endocrine .lh, draw := some 1 },
+     { id := 3, site, item := .endocrine .cortisol, draw := some 1 },
+     { id := 4, site, item := .tumorMarker ⟨3, 0⟩, draw := some 1 },
+     { id := 5, site, item := .tumorMarker ⟨4, 0⟩, draw := some 1 }] }
+
+example : (markerDay.withoutAdditions none).map Breakdown.execution = some [410, 230] := by decide
+
+example : total markerDay none = some 784 := by decide
+
+private def viralTiterDay (rows : List (Performance Item)) : Input :=
+  { (confirmInactive base ["notice/D012/paragraph/38/i", "notice/D012/paragraph/38/u",
+      "notice/D023/paragraph/2/a", "notice/D023/paragraph/5/a"]) with rows }
+
+private def immunologyDay : Input :=
+  let rows : List (Performance Item) :=
+    [{ id := 1, site, item := .rhFactor 1, specimen := some 1 },
+     { id := 2, site, item := .viralTiter .rubella, specimen := some 2 },
+     { id := 3, site, item := .autoantibody .rnpQuant },
+     { id := 4, site, item := .specificIge (some 1), draw := some 3 }]
+  { (confirmInactive (viralTiterDay rows) ["notice/D014/paragraph/1", "notice/D014/paragraph/7/i"]) with
+    autoantibodyDayConfirmed := true }
+
+example : total immunologyDay none = some 640 := by decide
+
+private theorem immunology_day_scope : immunologyDay.Scope none := by
+  refine ⟨?_, _, _, _, rfl, rfl, ?_⟩
+  · exact fun _ membership => List.all_eq_true.mp (by decide :
+      immunologyDay.rows.all (fun p => p.item.supported) = true) _ membership
+  · refine ⟨rfl, ⟨rfl, rfl, ?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+    · unfold SpecimenJudgment.DailyJudgment.Known
+      decide
+    · intro f h
+      cases h
+    · intro e h
+      cases h
+    · intro e h
+      cases h
+    · intro h
+      cases h
+    · intro h
+      cases h
+
+theorem immunology_day_determines :
+    ∃ r, immunologyDay.Permits none r ∧ ∀ other, immunologyDay.Permits none other → other = r :=
+  determines immunologyDay none immunology_day_scope
 
 example :
     let rows : List (Performance Item) :=
       [{ id := 1, site, item := .viralTiter .rubella, specimen := some 1 },
        { id := 2, site, item := .viralTiter .rubella, specimen := some 1 },
        { id := 3, site, item := .viralTiter .measles, specimen := some 1 }]
-    (({ base with rows } : Input).withoutAdditions none).map Breakdown.execution =
+    ((viralTiterDay rows).withoutAdditions none).map Breakdown.execution =
       some [158] := by decide
 
 example :
@@ -2016,7 +2646,7 @@ example :
       [{ id := 1, site, item := .classTiter .rubella .igm, specimen := some 1 },
        { id := 2, site, item := .classTiter .measles .igg, specimen := some 1 },
        { id := 3, site, item := .classTiter .mumps .igg, specimen := some 1 }]
-    (({ base with rows } : Input).withoutAdditions none).map Breakdown.execution =
+    ((viralTiterDay rows).withoutAdditions none).map Breakdown.execution =
       some [400] := by decide
 
 example :
@@ -2024,7 +2654,8 @@ example :
       [{ id := 1, site, item := .autoantibody .rnpQuant },
        { id := 2, site, item := .autoantibody .smQuant },
        { id := 3, site, item := .autoantibody .ssbQuant }]
-    (({ base with rows, autoantibodyDayConfirmed := true } : Input).withoutAdditions none).map
+    (({ (confirmInactive base ["notice/D014/paragraph/1", "notice/D014/paragraph/7/i"]) with
+      rows, autoantibodyDayConfirmed := true } : Input).withoutAdditions none).map
       Breakdown.execution = some [490] ∧
     total { base with rows } none = none := by decide
 
@@ -2032,13 +2663,15 @@ example :
     let rows : List (Performance Item) :=
       [{ id := 1, site, item := .alpPag, draw := some 1 },
        { id := 2, site, item := .endocrine .bap, draw := some 1 }]
-    let c := { base with rows, alpPaired := some true }
+    let c := { (confirmOutside (confirmInactive base ["notice/D008/paragraph/4"])
+      "notice/D008/paragraph/16" [([1, 2], [1])]) with rows, alpPaired := some true }
+    let bap := confirmOutside c "notice/D008/paragraph/16" [([1, 2], [2])]
     c.groups.map (List.map ChoiceGroup.members) = some [[1, 2]] ∧
       (c.withoutAdditions (some [1])).map Breakdown.execution = some [180] ∧
-      (c.withoutAdditions (some [2])).map Breakdown.execution = some [D008.Item.bap.points] ∧
+      (bap.withoutAdditions (some [2])).map Breakdown.execution = some [D008.Item.bap.points] ∧
       total { c with alpPaired := none } (some [1]) = none := by decide
 
-example : raw429.Scope none := by
+private theorem raw429_scope : raw429.Scope none := by
   refine ⟨?_, _, _, _, rfl, rfl, ?_⟩
   · exact fun _ membership => List.all_eq_true.mp (by decide :
       raw429.rows.all (fun p => p.item.supported) = true) _ membership
@@ -2055,6 +2688,215 @@ example : raw429.Scope none := by
       cases h
     · intro h
       cases h
+
+theorem raw429_determines :
+    ∃ r, raw429.Permits none r ∧ ∀ other, raw429.Permits none other → other = r :=
+  determines raw429 none raw429_scope
+
+private def susceptibilityExample : Individual := by
+  let row : Performance D019.Item := { id := 1, site, item := .two }
+  let c : D019.Context := {
+    performance := row, speciesCount := 2,
+    routineAntimicrobialNonSusceptibility := some true,
+    needsRepeatForMultidrugResistantTreatment := some true,
+    testPerformedOnDetectedOrganism := some true }
+  apply Individual.d019 c
+  refine ⟨rfl, ?_⟩
+  simp only [D019.eligibilityRules, satisfies_cons, satisfies_nil]
+  refine ⟨Or.inr ⟨rfl, rfl⟩, rfl, ?_, ?_, trivial⟩
+  · change D019.Item.two = .resistance → _
+    intro h
+    cases h
+  · change D019.Item.two = .combination → _
+    intro h
+    cases h
+
+private def mycobacterialExample : Individual := by
+  let row : Performance D020.Item := { id := 2, site, item := .liquid, simultaneous := some 3 }
+  let c : D020.Context := {
+    performance := row, liquidMedium := some true,
+    detection := some .redoxDye, collection := some [row], selected := some [row] }
+  refine Individual.d020 c ?_ ((D020.legacy_iff _ _).mpr rfl)
+  have collection : D020.collectionLimit.holds c () :=
+    D020.collectionFromReading_sound (c := c) (rows := [row]) (reading := some .pairwise) rfl
+  simp only [D020.InScope, satisfies_cons, satisfies_nil]
+  refine ⟨collection, ?_, ?_, trivial⟩
+  · change _ → D020.Liquid c
+    exact fun _ => ⟨rfl, by simp [c]⟩
+  · change D020.Item.liquid = .other → D020.Other c
+    intro h
+    cases h
+
+private def yeastExample : Individual := by
+  let c : D019Yeast.Context :=
+    { performance := { id := 4, site, item := () }
+      deepMycosis := some true, isolatedCausativeOrganism := some .candida }
+  apply Individual.d019_2 c <;>
+    simp [D019Yeast.InScope, D019Yeast.indication, D019Yeast.rates, D019Yeast.rate,
+      satisfies_cons, satisfies_nil, c]
+
+private def mixedDrugExample : Individual := by
+  let c : D022.Context :=
+    { performance := { id := 5, site, item := () }
+      method := .mixedDrugResistance, agents := [1, 2, 3, 4] }
+  apply Individual.d022 c
+  · have enough : 4 ≤ c.quantity := by decide
+    simp only [D022.InScope, satisfies_cons, satisfies_nil]
+    exact ⟨enough, enough, fun _ => enough, trivial⟩
+  · simp only [D022.rates, satisfies_cons, satisfies_nil]
+    exact ⟨rfl, trivial⟩
+
+private def breathExample : Individual := by
+  let c : D023Other.Context :=
+    { performance := { id := 6, site, item := .breath }, pyloriNotificationSatisfied := some true }
+  apply Individual.d023_2 c
+  simp only [D023Other.InScope, D023Other.eligibilityRules, satisfies_cons, satisfies_nil]
+  refine ⟨?_, ⟨?_, ?_⟩, ?_, ?_, ⟨?_, ?_⟩, ?_, trivial⟩ <;>
+    (intro h; first | rfl | cases h)
+
+private def lymphocyteExample : Individual := by
+  let c : D016.Context :=
+    { performance := { id := 7, site, item := .tSubset, series := some 7 }
+      investigatesImmunodeficiency := some true, otherSelected := some [] }
+  apply Individual.d016 c
+  simp [D016.Eligible, D016.eligibilityRules, satisfies_cons, satisfies_nil, D016.seriesRule,
+    D016.SeriesUnit, D016.surfaceRule, D016.lstBranches, D016.lstMethod, D016.gpiRule,
+    D016.Context.item, D016.Item.number, c]
+
+private def microscopySeriesExample : Individual := by
+  let row : Performance D017.Item :=
+    { id := 8, site, item := .specializedMicroscopy, specimen := some 8, series := some 8 }
+  let c : D017.Context :=
+    { performance := row, material := some .sputum,
+      examinesBacteriaOrProtozoaOrSimilar := some true, concentrationSmear := some true,
+      sediment := some .noCombinedPerformance, selectedInExamination := some [row],
+      sameCauseSuspectedAcrossSites := some false }
+  have scope : D017.InScope c := by
+    simp [D017.InScope, D017.eligibilityRules, satisfies_cons, satisfies_nil, D017.materialRule,
+      D017.oneExamination, D017.causativeSite, D017.Context.suppressed, D017.SmearKnown,
+      D017.Context.item, c, row]
+  exact Individual.d017 c 65 35 scope ((D017.legacy_iff _ _ scope false rfl).mpr rfl)
+
+private def organismDay : Input :=
+  let checked := [susceptibilityExample, mycobacterialExample, seriesExample 3 5,
+    yeastExample, mixedDrugExample, breathExample, lymphocyteExample, microscopySeriesExample]
+  let day := confirmInactive base
+    ["notice/D023-2/paragraph/1/i", "notice/D023-2/paragraph/4/i", "notice/D017/paragraph/2", "notice/D017/paragraph/4"]
+  { day with
+    rows := checked.map fun i => { i.performance with item := .individual i.performance.item }
+    individualFacts := fun id => checked.find? (·.performance.id == id)
+    individualStandalone := fun id => some ((checked.map (·.performance.id)).contains id)
+    susceptibilitySpecies := fun id => if id == 1 then some [10, 20, 20] else none
+    mycobacterialGroup := fun id => if id == 2 then some 3 else none
+    mycobacterialReading := fun group => if group == 3 then some .pairwise else none
+    seriesConfirmed := fun k => [5, 7, 8].contains k.identity }
+
+example :
+    (organismDay.withoutAdditions none).map Breakdown.execution =
+      some [240, 315, 376, 165, 415, 70, 185, 100] ∧
+      ({ organismDay with mycobacterialReading := fun _ => none }.prepare none).isNone ∧
+      ({ organismDay with susceptibilitySpecies := fun _ => none }.prepare none).isNone := by decide
+
+example : total organismDay none = some 2160 := by decide
+
+example : (total microscopyAndPuncture none, total flowDay (some [5]), total sensitivityDay none) =
+    (some 122, some 110, some 2710) := by decide
+
+private theorem early_division_scopes :
+    microscopyAndPuncture.Scope none ∧ flowDay.Scope (some [5]) ∧ sensitivityDay.Scope none := by
+  refine ⟨?_, ?_, ?_⟩
+  all_goals
+    refine ⟨?_, _, _, _, rfl, rfl, ?_⟩
+    · intro row member
+      exact (List.all_eq_true (p := fun p : Performance Item => p.item.supported)).mp
+        (by decide) row member
+    · refine ⟨rfl, ⟨rfl, rfl, ?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+      · unfold SpecimenJudgment.DailyJudgment.Known
+        decide
+      · intro f h
+        cases h
+      · intro e h
+        cases h
+      · intro e h
+        cases h
+      · intro h
+        cases h
+      · intro h
+        cases h
+
+theorem microscopy_day_determines :
+    ∃ r, microscopyAndPuncture.Permits none r ∧
+      ∀ other, microscopyAndPuncture.Permits none other → other = r :=
+  determines microscopyAndPuncture none early_division_scopes.1
+
+theorem flow_day_determines :
+    ∃ r, flowDay.Permits (some [5]) r ∧ ∀ other, flowDay.Permits (some [5]) other → other = r :=
+  determines flowDay (some [5]) early_division_scopes.2.1
+
+theorem sensitivity_day_determines :
+    ∃ r, sensitivityDay.Permits none r ∧ ∀ other, sensitivityDay.Permits none other → other = r :=
+  determines sensitivityDay none early_division_scopes.2.2
+
+private theorem additional_division_scopes :
+    markerDay.Scope none ∧ (registeredGroupsDay 99).Scope (some [20, 33, 70, 90, 91, 93]) := by
+  constructor
+  all_goals
+    refine ⟨?_, _, _, _, rfl, rfl, ?_⟩
+    · intro row member
+      exact (List.all_eq_true (p := fun p : Performance Item => p.item.supported)).mp
+        (by decide) row member
+    · refine ⟨rfl, ⟨rfl, rfl, ?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+      · unfold SpecimenJudgment.DailyJudgment.Known
+        decide
+      · intro f h
+        cases h
+      · intro e h
+        cases h
+      · intro e h
+        cases h
+      · intro h
+        cases h
+      · intro h
+        cases h
+
+theorem marker_day_determines :
+    ∃ r, markerDay.Permits none r ∧ ∀ other, markerDay.Permits none other → other = r :=
+  determines markerDay none additional_division_scopes.1
+
+theorem registered_day_determines :
+    let day := registeredGroupsDay 99
+    let selected := some [20, 33, 70, 90, 91, 93]
+    ∃ r, day.Permits selected r ∧ ∀ other, day.Permits selected other → other = r :=
+  determines (registeredGroupsDay 99) _ additional_division_scopes.2
+
+private theorem organism_day_scope : organismDay.Scope none := by
+  refine ⟨?_, _, _, _, rfl, rfl, ?_⟩
+  · exact fun _ membership => List.all_eq_true.mp (by decide :
+      organismDay.rows.all (fun p => p.item.supported) = true) _ membership
+  · refine ⟨rfl, ⟨rfl, rfl, ?_, ?_, ?_, ?_⟩, ?_, ?_⟩
+    · unfold SpecimenJudgment.DailyJudgment.Known
+      decide
+    · intro f h
+      cases h
+    · intro e h
+      cases h
+    · intro e h
+      cases h
+    · intro h
+      cases h
+    · intro h
+      cases h
+
+theorem organism_day_determines :
+    ∃ r, organismDay.Permits none r ∧ ∀ other, organismDay.Permits none other → other = r :=
+  determines organismDay none organism_day_scope
+
+example :
+    let c := rawDifferential 1
+    (({ c with outsideSelection := fun _ => none }.prepare (some [1])).isNone,
+      (c.prepare (some [2])).isNone,
+      total c (some [1])) = (true, true, some 405) := by decide
+
 
 end
 

@@ -590,4 +590,77 @@ theorem autoantibody_pair_projection (p q : Performance D014.Item)
     simp [D014.PairChoice, D014.Context.item, selected, peer, distinct, Ne.symm distinct]
   exact ⟨[p.item, q.item], [p.item], ⟨rfl, rfl⟩, by simp [Ne.symm distinct]⟩
 
+/-- D014(3)。二種類の項目キーを固定し、採用した側の区分別選択と照合する。 -/
+theorem thyroid_choice_projection (tpo microsomal : Performance Unit) (keep : Nat → Bool)
+    (selected : keep tpo.id = true) :
+    let p : Performance D014.Item := { tpo with item := .tpo }
+    let q : Performance D014.Item := { microsomal with item := .microsomal }
+    let c : D014.Context :=
+      { performance := p, combined := some ([p.item, q.item],
+        (([p, q].filter fun row => keep row.id).map Performance.item)) }
+    D014.thyroidChoice.holds c () ↔
+      (SpecimenSelectionGeneration.Instance.mk
+        [{ tpo with item := ("D014", "tpo") },
+         { microsomal with item := ("D014", "microsomal") }] 1 .principal).Permits keep :=
+  autoantibody_pair_projection
+    { tpo with item := .tpo } { microsomal with item := .microsomal } (by intro h; cases h)
+    (fun i => ("D014", if i == .tpo then "tpo" else "microsomal")) keep selected
+
+/-- D014(24)イと(27)イの区分別選択は、両項目を照合した同じ採否に対応する。 -/
+theorem myasthenia_choice_projection (achr musk : Performance Unit) (keep : Nat → Bool)
+    (selected : keep achr.id = true) :
+    let p : Performance D014.Item := { achr with item := .achr }
+    let q : Performance D014.Item := { musk with item := .musk }
+    let c : D014.Context :=
+      { performance := p, combined := some ([p.item, q.item],
+        (([p, q].filter fun row => keep row.id).map Performance.item)) }
+    (D014.achrChoice.holds c () ∧ D014.muskChoice.holds c ()) ↔
+      (SpecimenSelectionGeneration.Instance.mk
+        [{ achr with item := ("D014", "achr") }, { musk with item := ("D014", "musk") }]
+        1 .principal).Permits keep := by
+  have h := autoantibody_pair_projection
+    { achr with item := .achr } { musk with item := .musk } (by intro h; cases h)
+    (fun i => ("D014", if i == .achr then "achr" else "musk")) keep selected
+  exact and_self_iff.trans h
+
+/-- D007(9)(12)の二件が発動したとき、区分規則と汎用生成の指定方向を照合する。 -/
+theorem chemistry_directed_pair_projection (pair : BloodChemistryFurther.Pair)
+    (directed : pair = .ketones ∨ pair = .bicarbonateAndBloodGas)
+    (first second : SpecimenSelectionGeneration.Row) (different : first.item ≠ second.item)
+    (keep : Nat → Bool) :
+    (SpecimenSelectionGeneration.Instance.mk [first, second] 1 (.retain second.item)).Permits keep ↔
+      ∃ choice, pair.rule.holds true choice ∧
+        keep first.id = (choice != .second) ∧ keep second.id = (choice != .first) := by
+  have bound : ([first, second].filter fun row => row.item == second.item).length ≤ 1 := by
+    simp [different]
+  have differentKey : (first.item == second.item) = false := by
+    simp [different]
+  rw [SpecimenSelectionGeneration.direction_iff _ _ _ _ bound]
+  rcases directed with rfl | rfl <;>
+    simp [BloodChemistryFurther.Pair.rule, BloodChemistryFurther.Pair.permits, differentKey,
+      List.mem_cons,
+      show (BloodChemistryFurther.Choice.second != BloodChemistryFurther.Choice.first) = true from rfl]
+
+/-- D007(15)の区分型に表せる採否に限定して、主検査の上限を照合する。 -/
+theorem bile_acid_pair_projection (first second : SpecimenSelectionGeneration.Row)
+    (keep : Nat → Bool) (present : (keep first.id || keep second.id) = true) :
+    (SpecimenSelectionGeneration.Instance.mk [first, second] 1 .principal).Permits keep ↔
+      ∃ choice, BloodChemistryFurther.Pair.bileAcids.rule.holds true choice ∧
+        keep first.id = (choice != .second) ∧ keep second.id = (choice != .first) := by
+  rw [SpecimenSelectionGeneration.two_members_iff]
+  cases left : keep first.id <;> cases right : keep second.id
+  · simp [left, right] at present
+  · simp only [Bool.false_eq_true, false_implies, true_iff]
+    exact ⟨.second, (by intro _ h; cases h), rfl, rfl⟩
+  · simp only [true_implies, true_iff]
+    exact ⟨.first, (by intro _ h; cases h), rfl, rfl⟩
+  · constructor
+    · intro h
+      cases h rfl
+    · rintro ⟨choice, allowed, hf, hs⟩ _
+      cases choice
+      · cases hs
+      · cases hf
+      · exact (allowed rfl rfl).elim
+
 end Sanri.MedicalFee.CaseStudies.SpecimenPairwiseTables

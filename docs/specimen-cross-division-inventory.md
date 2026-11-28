@@ -1047,3 +1047,64 @@ D019項1〜3は告示PDF189頁の検査した菌種数と、通知PDF387頁(1)(2
 未確定の併施単位は条項別の `selectionReading`、医学的条件は条項と実施IDの組別の `selectionCondition`、追加群の採否は共通の実施ID別の `selectionKeep` を要する。対象区分の確認済み個別評価、日・患者・機関と同時／検体等の識別、別枠と対象期間の確認、判断料の月内候補・履歴、加算の指定・履歴、採取の適格性と対応実施を保持する。既存の読みの有限列挙ではこの三つの入力を固定する。
 
 電子点数表の項目対の照合は2群で変わった。D001(6)イは予定項目対1→3、コード対1→2で、コード対はいずれも対応行を確認できなかった。D007(46)イは予定項目対1→2で、既存の1対は対応し、追加したD313との対はコード未対応。外部照合の全体集計は同じだった。
+
+## 工程3a-4n
+
+基準診療日2026-10-22の外来。統一一覧の `dayRegistration` と `outsideReason` を条項ごとの `Entry` のフィールドに移した。D017(4)の同一起因菌の検索における部位選択を `notice/D017/paragraph/4` として追加した。区分別の `D017.causativeSite` を保持し、日次の汎用生成では対象外・役割とする。[出典の引継ぎ](source-register.md#工程3a-4nの選択群と包括)
+
+| 状態 | 群数 |
+| --- | ---: |
+| 日次登録・項目識別済み（`identified`） | 24 |
+| 日次登録・医学的条件付き（`conditional`） | 2 |
+| 3a-4lから確認済み（両フィールドなし） | 11 |
+| 対象外・起点や相手の役割・条件（`role`） | 36 |
+| 対象外・回数・期間（`period`） | 16 |
+| 対象外・項目識別（`key`） | 14 |
+| 対象外・制約の形（`shape`） | 10 |
+| 対象外・日次射影（`projection`） | 9 |
+| 対象外・検体検査外（`external`） | 7 |
+| 対象外・選択以外（`notSelection`） | 2 |
+| 対象外小計 | 94 |
+| 未着手 | 0 |
+| 合計 | 131 |
+
+### 対象外群の確認と登録群の採否
+
+旧 `inactiveSelection` を `outsideSelection` に置き換えた。`Input.outsideRows` は当日の検査と対応する採取行を区分・項目キーへ射影する。項目キーが空なら区分で照合する。`Input.requiredOutside` は当日の候補を起点とし、条項の区分・項目キー、候補数や単位に応じて、確認を要する群を拾う。`outsideMonthRows` から同じ患者の同月で日付が当日より前の行を候補の照合に使う。これらの履歴行の点数は日次に加えない。[確認入力と履歴単位](history-inventory.md#工程3a-4n)
+
+確認は条項IDごとに与える。`some []` は非発動、発動する場合は各群の当日実施IDの範囲と採用IDを渡す。`Input.outsideChoices` は確認の欠落、空の発動範囲、範囲外のID、実施範囲や採用一覧内の重複を保留する。自由選択・登録群・対象外群で同じ実施の採否が食い違う場合も日次を保留する。`outside_confirmed` と `outside_choice_included` は必要な確認の存在と発動時の採否の取込みを、`missing_outside_confirmation_holds_day` は必要な確認が欠けた場合の保留を示す。`scope_realizes_choices` と `scope_applies_outside_choice` は `Scope` の下で共通採否が群ごとの選択を実現することを示す。`retained_of_unrelated` は選択群に属さない実施を共通採否が保持することを示す。発動の有無、適用範囲、採用の根拠は外部確認であり、その意味の形式化と区分規則との同値性は残る。
+
+`registrationRows` で登録用の項目キーを選び、`generateRegistered` に条項別の読みと医学的条件を渡す。`scope_satisfies_registered` は `Scope` の下で、登録用の異なる項目キーが二つ以上あり、登録条項から群の生成に成功した場合に、その群の上限・方向を日次の共通採否が満たすことを示す。
+
+### 包括の割当てと被覆
+
+`BundleUnit` に `examination` と `collection` を追加した。D019項1〜3は実施IDごとの `susceptibilitySpecies` を重複排除し、菌種が一つ以上で、3を上限とした菌種数が告示項と一致するときに、患者・医療機関・診療日と実施IDを含む一検査のキーに割り当てる。治療の一連、再検査の例外、検出菌への実施は区分別の適格性に残る。D020は実施IDに対応する `mycobacterialGroup` と採取群ごとの `mycobacterialReading` が確認できれば、患者・医療機関・診療日と採取群IDを含むキーに割り当てる。日次では、同時又は同じ一連と確認できる実施が別群に分かれていれば保留し、各群から一件を採用して指定の読みで採取関係を照合する。割当ての式は `d019_bundle_assignment` と `d020_bundle_assignment` で証明した。点数は採用された区分別の個別評価から取る。
+
+`Input.needsBundle` が対象とする `Input.rows` の各実施について `bundleCoverage` を確認する。`bundle_coverage_of_scope` と `unique_bundle_of_scope` は `Scope` の下で割当てが存在し一意であることを示す。`missing_bundle_holds_day` は必要な割当てが欠けた場合の保留を示す。3a-4mで残っていたD019・D020の日次割当ては、確認済み入力を使う範囲で接続した。包括22群全体と全原実施に対する被覆、各群の点数評価と区分別規則の対応は継続する。
+
+### 合成日と区分別射影
+
+当日実施、履歴、採否を固定した合成データで、日次内訳 `Breakdown` の存在と一意性を証明した。表の点数は各 `example` の加算なし・採取料込みの合計。定理の対象は表に示す各入力と採否に限る。
+
+| 合成入力 | 合計点 | 存在・一意性の定理 |
+| --- | ---: | --- |
+| `sevenCategoryDay`、七判断料区分 | 5,416 | `seven_category_day_determines` |
+| `immunologyDay`、免疫学的検査 | 640 | `immunology_day_determines` |
+| `raw429`、尿・血算・生化学と採血 | 429 | `raw429_determines` |
+| `microscopyAndPuncture`、尿沈渣鏡検とD004のヒューナー検査 | 122 | `microscopy_day_determines` |
+| `flowDay`、尿沈渣のフローサイトメトリー法 | 110 | `flow_day_determines` |
+| `sensitivityDay`、腫瘍組織の感受性検査 | 2,710 | `sensitivity_day_determines` |
+| `markerDay`、内分泌と腫瘍マーカー | 784 | `marker_day_determines` |
+| `registeredGroupsDay 99`、登録群でD023側を採用 | 5,993 | `registered_day_determines` |
+| `organismDay`、D019・D020等の確認済み個別評価を含む日 | 2,160 | `organism_day_determines` |
+
+`registeredGroupsDay 98` でD013側を採用する合成例は5,983点。D019の菌種入力やD020の読みを欠く日、および対象外群の確認を欠くか共通採否と矛盾する日が保留になる合成例も検査した。[日次評価と合成例](../Sanri/SpecimenRawDay.lean)
+
+| 条項 | 区分別射影と前提 |
+| --- | --- |
+| D014(3) | `thyroid_choice_projection`。TPO抗体側の採用を固定し、二項目の区分別選択と一件上限を照合 |
+| D014(24)イ・(27)イ | `myasthenia_choice_projection`。抗アセチルコリンレセプター抗体側の採用を固定し、二条項の区分別選択と一件上限を照合 |
+| D007(9)(12) | `chemistry_directed_pair_projection`。発動を前提とする異なる二項目キーの採否を、第二項目を残す区分規則の方向と照合 |
+| D007(15) | `bile_acid_pair_projection`。少なくとも一項目を採用する、区分型に表せる採否に限って一件上限と照合 |
+
+区分別射影の前提と、全重複成分の適格性・方向・履歴を含む検証は引き続き区別する。全接続区分を含む合成日、一般の混合採取、迅速指定一覧、旧89種との全件対応、関連資料の探索と原文対応の独立レビュー、電子点数表との照合が残る。日次の存在・一意性は確認済みの前提を固定した限定モデルの性質であり、点数表全体や制度全体の結論は未検証である。[区分別射影](../Sanri/CaseStudies/SpecimenPairwiseTables.lean)
