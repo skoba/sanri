@@ -68,7 +68,7 @@ D018は単価と嫌気性・真菌培養の加算を別々に制約し、旧評�
 
 [SpecimenJudgment](./Sanri/SpecimenJudgment.lean) はD023(42)(43)の準用元を区別して所定点数を既存の検体検査集計へ渡し、微生物学的検査判断料の月次評価に合流させる。同じ準用一覧内では実施IDの重複を拒否する。既存一覧との照合は入力側に残る。
 
-[SpecimenRawDay](./Sanri/SpecimenRawDay.lean) は、原実施の区分と採血・検体・日を照合して包括キーを組み立てる。D026の候補は同じ原実施から作り、暦月の実施・算定履歴は個別に照会する。点数内訳の決定性の前提は `Input.Scope` に保持する。適用する主検査を指定し、選択と履歴の確認が揃った入力について内訳が一意となる。臨床的適格性、迅速・緊急加算の実施証拠、採取のコンテキストの確認を入力として保持する。[対象区分と残件](docs/specimen-cross-division-inventory.md#工程3a-4i)
+[SpecimenRawDay](./Sanri/SpecimenRawDay.lean) は、原実施の区分と採血・検体・日を照合して包括キーを組み立てる。D026の候補は同じ原実施から作り、暦月の実施・算定履歴は個別に照会する。点数内訳の決定性の前提は `Input.Scope` に保持する。適用する主検査を指定し、選択と履歴の確認が揃った入力について内訳が一意となる。臨床的適格性、迅速・緊急加算の実施証拠、採取のコンテキストの確認を入力として保持する。[対象区分と残件](docs/specimen-cross-division-inventory.md#工程3a-4j)
 
 [D023Outpatient](./Sanri/D023Outpatient.lean) は告示の項・枝と通知上の検査種類を結び、適格性と加算条件が確定した個別実施の点数を求める。第25項等の別算定制限では、D012・D023の実施を患者・機関・治療の一連で照合した一覧を扱う。会計上の加算と摘要事項は条項ごとに独立した制約をもつ。[SpecimenJudgmentRouting](./Sanri/SpecimenJudgmentRouting.lean) は既存の実施モジュールから判断料区分への射影と共通振分けの一致を示す。[HistoryConnections](./Sanri/HistoryConnections.lean) の外来日次評価は、D025・D027等の同月包括、初回実施日、D026の各加算の既算定を確認した入力に対し、点数と実施料への接続を定義する。
 

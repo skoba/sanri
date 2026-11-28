@@ -385,6 +385,121 @@ theorem assessDay_perm_of_distinct_frames {xs ys : List Context} {assessments : 
     ((conflictingLimitedCharges_perm h).symm.trans conflict)]
   exact mapM_assess_perm h ok
 
+private def repeatAssessment (c : Context) : Assessment :=
+  { notSeparate := some (if isDaily c.item then .dailyAlreadyClaimed else .seriesAlreadyClaimed) }
+
+private theorem assess_already_charged (a b : Context) (result : Assessment)
+    (frame : sameLimitedFrame a b = true)
+    (solo : assess b = some result) (billable : result.notSeparate = none) :
+    assess { b with
+      dailyAlreadyClaimed := b.dailyAlreadyClaimed || decide (a.item = b.item)
+      seriesAlreadyClaimed := b.seriesAlreadyClaimed ||
+        decide (a.item = b.item ∧ a.seriesId = b.seriesId) } = some (repeatAssessment b) := by
+  have performed : (!b.insuranceMedicalInstitution || !b.performed) = false := by
+    cases h : (!b.insuranceMedicalInstitution || !b.performed) <;> simp_all [assess]
+  have reason : notSeparateReason b = none := by
+    cases h : notSeparateReason b <;> simp_all [assess] <;> subst result <;> simp_all
+  have item : a.item = b.item := by
+    by_cases eq : a.item = b.item
+    · exact eq
+    · simp [sameLimitedFrame, eq] at frame
+  have surgery : b.duringSurgery = false := by
+    cases h : b.duringSurgery <;> simp_all [notSeparateReason]
+  have procedure : b.commonProcedureClaimedSameDay = false := by
+    cases h : b.commonProcedureClaimedSameDay <;> simp_all [notSeparateReason]
+  have inpatient : (isD400 b.item && b.inpatient) = false := by
+    cases h : (isD400 b.item && b.inpatient) <;> simp_all [notSeparateReason]
+  have circuit : ((isD400 b.item || decide (b.item = .arterialBlood)) && b.bloodCircuitSampling) =
+      false := by
+    cases h : ((isD400 b.item || decide (b.item = .arterialBlood)) && b.bloodCircuitSampling) <;>
+      simp_all [notSeparateReason]
+  by_cases daily : isDaily b.item = true
+  · simp [assess, notSeparateReason, repeatAssessment, performed, surgery, procedure,
+      inpatient, circuit, item, daily]
+  · have series : isSeries b.item = true ∧ a.seriesId = b.seriesId := by
+      simpa [sameLimitedFrame, item, daily] using frame
+    simp [assess, notSeparateReason, repeatAssessment, performed, surgery, procedure,
+      inpatient, circuit, item, daily, series.1, series.2]
+
+private theorem repeat_tail (anchor : Context) (rest : List Context) (entries : List Assessment)
+    (result : Assessment) (billable : result.notSeparate = none)
+    (matching : ∀ b ∈ rest, sameLimitedFrame anchor b = true ∧ assess b = some result) :
+    rest.foldlM dayStep ([anchor], entries) =
+      some ([anchor], entries ++ rest.map repeatAssessment) := by
+  induction rest generalizing entries with
+  | nil => simp
+  | cons b rest ih =>
+    have hb := matching b (by simp)
+    have h := assess_already_charged anchor b result hb.1 hb.2 billable
+    have step : dayStep ([anchor], entries) b = some ([anchor], entries ++ [repeatAssessment b]) := by
+      unfold dayStep
+      simp only [List.any_cons, List.any_nil, Bool.or_false]
+      rw [h]
+      simp [repeatAssessment]
+    rw [List.foldlM_cons, step]
+    change rest.foldlM dayStep ([anchor], entries ++ [repeatAssessment b]) = _
+    rw [ih _ (fun c hc => matching c (by simp [hc]))]
+    simp [List.append_assoc]
+
+private theorem repeat_result {rows : List Context} (result : Assessment)
+    (mixed : mixedD400 rows = false) (conflicts : conflictingLimitedCharges rows = false)
+    (solo : ∀ b ∈ rows, assess b = some result) (billable : result.notSeparate = none)
+    (frame : ∀ a ∈ rows, ∀ b ∈ rows, sameLimitedFrame a b = true) :
+    assessDay rows =
+      some (if rows.isEmpty then [] else result :: (rows.drop 1).map repeatAssessment) := by
+  cases rows with
+  | nil => rfl
+  | cons a rest =>
+    have ha := solo a (by simp)
+    have step : dayStep ([], []) a = some ([a], [result]) := by
+      unfold dayStep
+      simp [ha, billable]
+    unfold assessDay
+    simp only [mixed, conflicts, Bool.false_eq_true, ↓reduceIte, List.foldlM_cons, step]
+    simp only [bind, Option.bind]
+    change (do let out ← rest.foldlM dayStep ([a], [result]); some out.2) = _
+    rw [repeat_tail a rest [result] result billable
+      (fun b hb => ⟨frame a (by simp) b (by simp [hb]), solo b (by simp [hb])⟩)]
+    rfl
+
+/-- 日次又は一連の同一枠だけを反復し、同じ単独の別算定内訳が確認できた場合。
+最初の一件がその内訳となり、残りの全件は同じ日次又は一連の理由で包括される。 -/
+theorem assessDay_perm_of_repeated_frame {xs ys : List Context} {assessments : List Assessment}
+    (perm : xs.Perm ys) (ok : assessDay xs = some assessments)
+    (solo : ∃ result, result.notSeparate = none ∧ ∀ b ∈ xs, assess b = some result)
+    (frame : ∀ a ∈ xs, ∀ b ∈ xs, sameLimitedFrame a b = true) :
+    assessDay ys = some assessments := by
+  obtain ⟨result, billable, solo⟩ := solo
+  have mixed : mixedD400 xs = false := by
+    cases eh : mixedD400 xs <;> simp_all [assessDay]
+  have conflict : conflictingLimitedCharges xs = false := by
+    cases eh : conflictingLimitedCharges xs <;> simp_all [assessDay]
+  rw [repeat_result result mixed conflict solo billable frame] at ok
+  rw [repeat_result result ((mixedD400_perm perm).symm.trans mixed)
+    ((conflictingLimitedCharges_perm perm).symm.trans conflict)
+    (fun b hb => solo b (perm.mem_iff.mpr hb)) billable
+    (fun a ha b hb => frame a (perm.mem_iff.mpr ha) b (perm.mem_iff.mpr hb))]
+  cases xs with
+  | nil => have eq := List.perm_nil.mp perm.symm; subst ys; exact ok
+  | cons a left =>
+    cases ys with
+    | nil => simp at perm
+    | cons b right =>
+      have hitem : ∀ c ∈ a :: left, c.item = a.item := by
+        intro c hc
+        have hf := frame a (by simp) c hc
+        by_cases h : c.item = a.item
+        · exact h
+        · simp [sameLimitedFrame, Ne.symm h] at hf
+      have output (c : Context) (hc : c ∈ a :: left) : repeatAssessment c = repeatAssessment a := by
+        simp [repeatAssessment, hitem c hc]
+      have mappedLeft : left.map repeatAssessment = List.replicate left.length (repeatAssessment a) :=
+        List.map_eq_replicate_iff.mpr (fun c hc => output c (by simp [hc]))
+      have mappedRight : right.map repeatAssessment = List.replicate right.length (repeatAssessment a) :=
+        List.map_eq_replicate_iff.mpr (fun c hc => output c (perm.mem_iff.mpr (by simp [hc])))
+      have length : left.length = right.length := by simpa using perm.length_eq
+      simpa [mappedLeft, mappedRight, length] using ok
+
 /-- 検査通則の第４節に引き渡す。別算定しない採取を種類数に含めない。
 Ｅ４００のフィルムは第４節の置換対象に混ぜず、呼出元で別に合算する。 -/
 def Assessment.toCollection (a : Assessment) (kind : Nat) : Option Examinations.TestCharge :=
