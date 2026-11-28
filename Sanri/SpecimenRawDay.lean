@@ -14,10 +14,13 @@ inductive Item where
   | tumorTissue (item : D004Tumor.Item)
   | morphology (context : BloodMorphology.Context)
   | chemistry (item : BloodChemistry.Item)
+  | ketone (item : BloodChemistryFurther.Item)
   | coagulation (item : D006.Item)
   | endocrine (item : D008.Item)
   | alpPag
   | tumorMarker (item : D009.Item)
+  /-- D011の項3に該当すると確認したRh因子。 -/
+  | rhFactor (factor : Nat)
   | hepatitis (item : D013.Item)
   | specificIge (antigen : Option Nat)
   | viralTiter (target : D012.Target)
@@ -45,13 +48,17 @@ def Item.supported : Item → Bool
       .automatedDifferential, .microscopicDifferential].contains c.item
   | .chemistry i => [BloodChemistry.Item.bun, .uricAcid, .glucose, .ast, .alt, .creatinine,
       .totalProtein, .albumin, .gammaGT, .calcium, .ionizedCalcium,
-      .uibcColorimetric, .tibcColorimetric].contains i
+      .uibcColorimetric, .tibcColorimetric, .hdlCholesterol, .ldlCholesterol,
+      .totalCholesterol, .proteinFractionation].contains i
+  | .ketone i => [.ketoneBodies, .ketoneFractions].contains i
   | .coagulation i => [D006.Item.antithrombinActivity, .pic, .dDimer,
       .tat, .prothrombinFragment].contains i
   | .endocrine i => [D008.Item.fsh, .lh, .cortisol, .bap].contains i
   | .alpPag => true
   | .tumorMarker i => [4, 5, 13].contains i.number && i.variant == 0
-  | .hepatitis i => [D013.Item.hbeAntigen, .hbeAntibody, .hcvAntibody].contains i
+  | .rhFactor _ => true
+  | .hepatitis i => [D013.Item.hbeAntigen, .hbeAntibody, .hcvAntibody,
+      .hbcAntibody, .hbcIgM, .haAntibody, .haIgM].contains i
   | .specificIge _ => true
   | .viralTiter t => [D012.Target.rubella, .measles, .mumps, .cytomegalovirus].contains t
   | .classTiter t a =>
@@ -60,6 +67,45 @@ def Item.supported : Item → Bool
   | .autoantibody i => [D014.Item.rnpQuant, .smQuant, .ssbQuant].contains i
   | .individual _ => true
   | .other _ => false
+
+/-- D007の併測について試す単位。条項ごとに指定する。 -/
+inductive CotestReading where
+  | simultaneous | specimen | day
+  deriving DecidableEq
+
+def CotestReading.matches (reading : CotestReading) (a b : Performance α) : Option Bool :=
+  match reading with
+  | .simultaneous => a.simultaneousWith b
+  | .specimen => a.sameSpecimen b
+  | .day => some (a.site == b.site)
+
+theorem cotest_reading_agrees (a b : Performance α)
+    (simultaneous : a.simultaneousWith b = some true)
+    (specimen : a.sameSpecimen b = some true) (day : (a.site == b.site) = true)
+    (reading : CotestReading) : reading.matches a b = some true := by
+  cases reading <;> simp [CotestReading.matches, simultaneous, specimen, day]
+
+theorem cotest_reading_members (anchor : Performance α) (rows : List (Performance α))
+    (simultaneous : ∀ row ∈ rows, anchor.simultaneousWith row = some true)
+    (specimen : ∀ row ∈ rows, anchor.sameSpecimen row = some true)
+    (day : ∀ row ∈ rows, (anchor.site == row.site) = true) (reading : CotestReading) :
+    rows.filterM (reading.matches anchor) = some rows := by
+  have all : ∀ row ∈ rows, reading.matches anchor row = some true :=
+    fun row member => cotest_reading_agrees anchor row
+      (simultaneous row member) (specimen row member) (day row member) reading
+  have loop (xs acc : List (Performance α))
+      (matched : ∀ row ∈ xs, reading.matches anchor row = some true) :
+      List.filterAuxM (reading.matches anchor) xs acc = some (xs.reverse ++ acc) := by
+    induction xs generalizing acc with
+    | nil => rfl
+    | cons x xs ih =>
+      have hx := matched x (by simp)
+      have step := ih (x :: acc) (fun y hy => matched y (by simp [hy]))
+      simp [List.filterAuxM, hx, step, List.reverse_cons, List.append_assoc]
+  simp [List.filterM, loop rows [] all]
+
+inductive HepatitisCountReading where
+  | performed | retained
 
 /-- 検査一覧と、その日を評価するための確認済みの入力。
 判断料の対象一覧と加算の検査一覧は実施から組み立てる。採取条件・履歴は別入力。 -/
@@ -71,6 +117,11 @@ structure Input where
   collectionHistoryConfirmed : Bool
   eligible : Nat → Option Bool
   chemistryFacts : Nat → BloodChemistry.Draw
+  cholesterolReading : Option CotestReading := none
+  proteinReading : Option CotestReading := none
+  ketoneReading : Option CotestReading := none
+  /-- D013注の項目数と単価合計に、併施選択で除外した実施を含めるか。 -/
+  hepatitisCountReading : Option HepatitisCountReading := none
   coverage : SpecimenJudgment.Test → SpecimenJudgment.IncludedTest
   excludedJudgmentCandidate : Option Bool
   /-- 当日の実施IDに対応する確認済みの加算条件。none は候補なしを確認済み。 -/
@@ -270,6 +321,12 @@ private def chemistryKey : BloodChemistry.Item → String
   | .ionizedCalcium => "ionizedCalcium"
   | .uibcColorimetric => "uibcColorimetric"
   | .tibcColorimetric => "tibcColorimetric"
+  | .hdlCholesterol => "hdlCholesterol"
+  | .ldlCholesterol => "ldlCholesterol"
+  | .totalCholesterol => "totalCholesterol"
+  | .proteinFractionation => "proteinFractionation"
+  | .totalProtein => "totalProtein"
+  | .albumin => "albumin"
   | _ => ""
 
 /-- 対象はD007のPAG法とD008のBAPの二項目。併施の時間幅は確認値を使う。 -/
@@ -310,6 +367,45 @@ private def Input.lungPanelGroups (c : Input) : Option (List ChoiceGroup) := do
     return groups.flatten
 
 /-- 一つの項目が複数の二件群に入るD005(3)の読みはここでは未確定とする。 -/
+private def Input.chemistryTriple (c : Input) (reading : Option CotestReading)
+    (kind : ChemistryCombination) (clause : String)
+    (keys : List BloodChemistry.Item) : Option (List ChoiceGroup) := do
+  let rows := c.chemistry.filter (fun p => keys.contains p.item)
+  if !keys.all (fun item => rows.any (·.item == item)) then return []
+  let reading ← reading
+  let anchorItem :: _ := keys | none
+  let groups ← (rows.filter (·.item == anchorItem)).mapM fun anchor => do
+    let together ← rows.filterM (reading.matches anchor)
+    if !keys.all (fun item => together.any (·.item == item)) then return []
+    let group ← chemistryCombinationProjection kind together
+    let indexed := together.map fun p => { p with item := ("D007", chemistryKey p.item) }
+    let projected ← SpecimenSelectionInventory.checkedProjection clause indexed group
+    return [projected]
+  return groups.flatten
+
+private def Input.hepatitisGroups (c : Input) (kind : HepatitisCombination)
+    (clause : String) (first second : D013.Item) : Option (List ChoiceGroup) := do
+  let rows : List (Performance D013.Item) := c.rows.filterMap fun p =>
+    match p.item with
+    | .hepatitis i => if i == first || i == second then some { p with item := i } else none
+    | _ => none
+  if !(rows.any (·.item == first) && rows.any (·.item == second)) then return []
+  let candidates ← (rows.filter (·.item == first)).mapM fun anchor => do
+    let same ← rows.filterM (anchor.simultaneousWith ·)
+    if !same.any (·.item == second) then return []
+    -- 異なる採血にまたがる場合の包括評価は保留する。
+    if !same.all (fun row => anchor.sameDraw row == some true) then none else
+      let group ← hepatitisGroup kind anchor rows
+      let indexed := same.map fun p => { p with item := ("D013", match p.item with
+        | .hbcAntibody => "hbcAntibody"
+        | .hbcIgM => "hbcIgM"
+        | .haAntibody => "haAntibody"
+        | .haIgM => "haIgM"
+        | _ => "") }
+      let projected ← SpecimenSelectionInventory.checkedProjection clause indexed group
+      return [projected]
+  return candidates.flatten.eraseDups
+
 def Input.groups (c : Input) : Option (List ChoiceGroup) := do
   let morphology ← (pairs c.morphology).mapM fun (left, right) => do
     let a : Performance BloodMorphology.Item := { left with item := left.item.item }
@@ -340,7 +436,14 @@ def Input.groups (c : Input) : Option (List ChoiceGroup) := do
       let sediment ← c.sedimentGroups
       let renal ← c.renalGroups
       let lungPanel ← c.lungPanelGroups
-      return morphology.flatten ++ chemistry.flatten ++ coagulation ++ alp ++ sediment ++ renal ++ lungPanel
+      let cholesterol ← c.chemistryTriple c.cholesterolReading .cholesterol
+        BloodChemistry.cholesterolRule.id BloodChemistry.cholesterolGroup
+      let protein ← c.chemistryTriple c.proteinReading .protein
+        BloodChemistry.proteinRule.id BloodChemistry.proteinGroup
+      let hbCore ← c.hepatitisGroups .hbCore D013.hbCoreChoice.id .hbcAntibody .hbcIgM
+      let ha ← c.hepatitisGroups .ha D013.haChoice.id .haAntibody .haIgM
+      return morphology.flatten ++ chemistry.flatten ++ coagulation ++ alp ++ sediment ++ renal ++
+        lungPanel ++ cholesterol ++ protein ++ hbCore ++ ha
 
 /-- 指定した採否が全群に共通し、各群の必要件数を満たす場合にだけ射影する。 -/
 def resolveChoices (groups : List ChoiceGroup) (selected : Option (List Nat)) :
@@ -349,8 +452,119 @@ def resolveChoices (groups : List ChoiceGroup) (selected : Option (List Nat)) :
     if selected.getD [] == [] then some [] else none
   else
     let ids ← selected
-    if !(consistentSelections groups [] []).any (·.isPerm ids) then none else
+    let memberIds := (groups.flatMap ChoiceGroup.members).eraseDups
+    if !((memberIds.filter ids.contains).isPerm ids) ||
+        !groups.all (fun g => g.members.eraseDups == g.members &&
+          (g.members.filter ids.contains).length == g.count) then none else
       return groups.map fun g => ⟨g, g.members.filter ids.contains⟩
+
+private theorem resolveChoices_perm (groups : List ChoiceGroup) {ids other : List Nat}
+    (perm : ids.Perm other) :
+    resolveChoices groups (some ids) = resolveChoices groups (some other) := by
+  have contains (id : Nat) : ids.contains id = other.contains id := by
+    apply Bool.eq_iff_iff.mpr
+    simpa only [List.contains_iff_mem] using perm.mem_iff (a := id)
+  have test (xs : List Nat) : xs.isPerm ids = xs.isPerm other := by
+    apply Bool.eq_iff_iff.mpr
+    rw [List.isPerm_iff, List.isPerm_iff]
+    exact ⟨(·.trans perm), (·.trans perm.symm)⟩
+  have empty : (ids == []) = (other == []) := by
+    apply Bool.eq_iff_iff.mpr
+    simp only [beq_iff_eq]
+    constructor <;> intro h
+    · subst ids
+      exact perm.nil_eq.symm
+    · subst other
+      exact perm.symm.nil_eq.symm
+  have filters : ids.contains = other.contains := funext contains
+  simp only [resolveChoices, Option.getD_some, bind, Option.bind, test, empty, filters]
+
+private theorem resolveChoices_canonical (groups : List ChoiceGroup) (selected : Option (List Nat))
+    {choices : List GroupChoice} (ok : resolveChoices groups selected = some choices) :
+    ∃ candidate ∈ (none :: (consistentSelections groups [] []).map some),
+      resolveChoices groups candidate = some choices := by
+  unfold resolveChoices at ok
+  split at ok
+  · split at ok
+    · refine ⟨none, by simp, ?_⟩
+      simpa [resolveChoices, ‹groups.isEmpty = true›] using ok
+    · simp at ok
+  · cases selected with
+    | none => simp at ok
+    | some ids =>
+      simp only [bind, Option.bind] at ok
+      split at ok
+      · simp at ok
+      · rename_i valid
+        have conditions := Bool.or_eq_false_iff.mp (Bool.eq_false_iff.mpr valid)
+        have unneg (b : Bool) : (!b) = false → b = true := by cases b <;> simp
+        have perm := List.isPerm_iff.mp (unneg _ conditions.1)
+        have counts := unneg _ conditions.2
+        let canon := (groups.flatMap ChoiceGroup.members).eraseDups.filter ids.contains
+        have mem : canon ∈ consistentSelections groups [] [] := by
+          simpa [canon] using consistentSelections_contains groups [] [] ids.contains rfl rfl counts
+        have old : resolveChoices groups (some ids) = some choices := by
+          simp only [resolveChoices, ‹¬groups.isEmpty = true›, bind, Option.bind, valid]
+          exact ok
+        exact ⟨some canon, by simp [mem], (resolveChoices_perm groups perm).trans old⟩
+
+theorem resolveChoices_agree (groups : List ChoiceGroup) (selected : Option (List Nat))
+    (choices : List GroupChoice) (resolved : resolveChoices groups selected = some choices) :
+    Agree choices := by
+  unfold resolveChoices at resolved
+  split at resolved
+  · split at resolved
+    · have eq : choices = [] := by simpa [eq_comm] using resolved
+      simp [eq, Agree]
+    · simp at resolved
+  · cases selected with
+    | none => simp at resolved
+    | some ids =>
+      simp only [bind, Option.bind] at resolved
+      split at resolved
+      · simp at resolved
+      · have eq := Option.some.inj resolved
+        subst choices
+        intro a ha b hb id ia ib
+        obtain ⟨ga, _, rfl⟩ := List.mem_map.mp ha
+        obtain ⟨gb, _, rfl⟩ := List.mem_map.mp hb
+        simp [ia, ib]
+
+theorem resolveChoices_realizes (groups : List ChoiceGroup) (selected : Option (List Nat))
+    (choices : List GroupChoice) (resolved : resolveChoices groups selected = some choices) :
+    Realizes choices (fun id => retained choices id = true) :=
+  retained_iff _ (resolveChoices_agree groups selected choices resolved)
+
+private def Input.ketones (c : Input) : List (Performance BloodChemistryFurther.Item) :=
+  c.rows.filterMap fun p => match p.item with
+    | .ketone item => some { p with item := item }
+    | _ => none
+
+/-- D007(9)の算定側は条項から決まる。読みが未指定の併測候補は保留する。 -/
+def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
+  let first := c.ketones.filter (·.item == .ketoneBodies)
+  let second := c.ketones.filter (·.item == .ketoneFractions)
+  if first.isEmpty || second.isEmpty then return []
+  let reading ← c.ketoneReading
+  let choices ← first.flatMap (fun a => second.map (a, ·)) |>.mapM fun (a, b) => do
+    if !(← reading.matches a b) then return []
+    let choice ← chemistryPriorityGroup a b
+    return [choice]
+  return choices.flatten
+
+theorem ketone_priority_iff (choice : BloodChemistryFurther.Choice) :
+    BloodChemistryFurther.Pair.ketones.rule.holds true choice ↔ choice = .second := by
+  simp [BloodChemistryFurther.Pair.rule, BloodChemistryFurther.Pair.permits]
+
+private def Input.resolveDayChoices (c : Input) (selected : Option (List Nat)) :
+    Option (List GroupChoice) := do
+  let openGroups ← c.groups
+  let directed ← c.directedChoices
+  if directed.isEmpty then return ← resolveChoices openGroups selected
+  let free ← resolveChoices openGroups selected
+  let groups := openGroups ++ directed.map GroupChoice.group
+  let ids := ((free ++ directed).flatMap GroupChoice.selected).eraseDups
+  resolveChoices groups (some ids)
 
 private def fixedCharge (points : Nat) : Charge :=
   ⟨(· = points), points, rfl, fun _ h => h⟩
@@ -364,7 +578,9 @@ private def Input.morphologyPoints (c : Input) (choices : List GroupChoice) : Op
 private def Input.drawFacts (c : Input) (draw : Nat) : BloodChemistry.Draw :=
   { c.chemistryFacts draw with
     calcium := { together := some false }
-    ironBinding := { together := some false } }
+    ironBinding := { together := some false }
+    cholesterol := { together := some false }
+    protein := { together := some false } }
 
 private def Input.chemistryDraws (c : Input) (choices : List GroupChoice) :
     Option (List (Nat × List BloodChemistry.Item)) := do
@@ -404,10 +620,12 @@ private def Input.tests (c : Input) (choices : List GroupChoice) : List DayTest 
         (c.tumorSensitivityFacts { p with item := .sensitivity }).map fun (_, category) =>
           D004Tumor.judgmentTest .sensitivity category
       | .tumorTissue i => some (D004Tumor.judgmentTest i .geneticChromosomal)
+      | .ketone i => some (D007.Item.judgmentTest ⟨.further, i⟩)
       | .coagulation i => some (D006.judgmentTest i)
       | .endocrine i => some (D008.judgmentTest i)
       | .alpPag => some (D007.Item.judgmentTest ⟨.late, .alpIsoenzymesPag⟩)
       | .tumorMarker i => some (D009.judgmentTest i)
+      | .rhFactor _ => some (D011.judgmentTest .otherRh)
       | .hepatitis i => some (D013.judgmentTest i)
       | .specificIge _ => some (D015.judgmentTest .specificIge false)
       | .viralTiter _ => some (D012.judgmentTest .viralTiter)
@@ -427,6 +645,7 @@ def Input.assignment (p : Performance Item) : Option BundleKey :=
   | .coagulation _ => bundleKey ⟨6, 0, .draw⟩ p
   | .endocrine _ => bundleKey ⟨8, 0, .draw⟩ p
   | .tumorMarker _ => bundleKey ⟨9, 0, .draw⟩ p
+  | .rhFactor _ => bundleKey ⟨11, 3, .specimen⟩ p
   | .hepatitis _ => bundleKey ⟨13, 0, .draw⟩ p
   | .specificIge _ => bundleKey ⟨15, 13, .draw⟩ p
   | .viralTiter _ => bundleKey ⟨12, 11, .specimen⟩ p
@@ -439,9 +658,24 @@ theorem assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKe
     (hb : row ∈ assignedMembers Input.assignment c.rows b) : a = b :=
   assigned_members_disjoint _ _ ha hb
 
+/-- D006-27の二系列も、個別評価証拠を原実施に照合してから同じ割当てに渡す。 -/
+def Input.bundleAssignment (c : Input) (row : Performance Item) : Option BundleKey := do
+  match row.item with
+  | .individual test =>
+    let individual ← c.individualFacts row.id
+    if individual.performance != { row with item := test } then none else
+      let item ← individual.plasmaPanelItem
+      plasmaPanelBundleKey { row with item := item }
+  | _ => Input.assignment row
+
+theorem bundle_assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKey}
+    (ha : row ∈ assignedMembers c.bundleAssignment c.rows a)
+    (hb : row ∈ assignedMembers c.bundleAssignment c.rows b) : a = b :=
+  assigned_members_disjoint _ _ ha hb
+
 private def Item.extraBundle : Item → Bool
   | .tumorTissue i => decide (i ≠ .sensitivity)
-  | .coagulation _ | .endocrine _ | .tumorMarker _ | .hepatitis _ | .specificIge _
+  | .coagulation _ | .endocrine _ | .tumorMarker _ | .hepatitis _ | .specificIge _ | .rhFactor _
   | .viralTiter _ | .classTiter _ _ | .autoantibody _ => true
   | _ => false
 
@@ -508,14 +742,30 @@ private def Input.extraBundlePoints (c : Input) (choices : List GroupChoice) :
           let rows := typed.map fun p => ({ performance := p, route := .d009, bloodSpecimen := true } : D009.Context)
           let draw ← tumorMarkerDraw { anchor with item := item } rows (fun _ => none)
           return [D009.bundlePoints draw.items]
+      | .rhFactor _ =>
+        let factors := members.filterMap fun p => match p.item with
+          | .rhFactor factor => some ({ p with item := factor } : Performance Nat)
+          | _ => none
+        let context : D011.Context := { performance := { anchor with item := .otherRh } }
+        let group ← rhSpecimenInput context factors
+        return [group.performance.item.points]
       | .hepatitis item =>
+        let performed := assignedMembers Input.assignment rows key
+        let count ← if performed.length == members.length then some members.length
+          else c.hepatitisCountReading.map fun reading => match reading with
+            | .performed => performed.length
+            | .retained => members.length
         let typed := members.filterMap fun p => match p.item with
           | .hepatitis i => some ({ p with item := i } : Performance D013.Item)
           | _ => none
         if !distinctItems typed then none else
           let rows := typed.map fun p => ({ performance := p } : D013.Context)
           let draw ← hepatitisDraw { anchor with item := item } rows
-          return [SpecimenTests.groupedBase .hepatitis draw.count draw.standardSum]
+          let performedItems := performed.filterMap fun p => match p.item with
+            | .hepatitis i => some i
+            | _ => none
+          if count != draw.count && performedItems.eraseDups != performedItems then none
+          else some [SpecimenTests.groupedBase .hepatitis count draw.standardSum]
       | .specificIge _ =>
         let rows ← members.mapM fun p => do
           let .specificIge antigen := p.item | none
@@ -580,17 +830,23 @@ private def Input.validCollectionRows (c : Input) : Bool :=
       (!p.specimen.isSome || row.specimen == p.specimen))
 
 /-- D006-12・D006-27を当日確認済みの採血IDごとに集約する。 -/
-private def individualPoints (rows : List Individual) : Option (List Nat) := do
-  let panel := rows.filterMap fun i =>
-    i.plasmaPanelItem.map fun item =>
-      ({ performance := { i.performance with item := item }, points := i.points } :
-        D006PlasmaPanel.Assessed)
-  let draws ← panel.mapM (·.performance.draw)
-  let grouped ← draws.eraseDups.mapM fun draw => do
-    let members := panel.filter fun p => p.performance.draw == some draw
+private def Input.individualPoints (c : Input) (rows : List Individual) : Option (List Nat) := do
+  let panel ← (rows.filter (·.plasmaPanelItem.isSome)).mapM fun i => do
+    let item ← i.plasmaPanelItem
+    let key ← c.bundleAssignment { i.performance with item := .individual i.performance.item }
+    let assessed : D006PlasmaPanel.Assessed :=
+      { performance := { i.performance with item := item }, points := i.points }
+    return ((key.site, key.identity), assessed)
+  let draws := (panel.map Prod.fst).eraseDups
+  let grouped ← draws.mapM fun draw => do
+    let members := (panel.filter fun p => p.1 == draw).map Prod.snd
     let items := members.map (·.performance.item)
     if items.eraseDups != items then none else some (D006PlasmaPanel.bundlePoints members).total
   return (rows.filter fun i => i.plasmaPanelItem.isNone).map Individual.points ++ grouped
+
+theorem rh_rate_projection (g : D011.Context) (p : Nat) :
+    Satisfies D011.rules g p ↔ p = g.performance.item.points :=
+  D011.rate_iff g p
 
 private def Input.rapidBasis (c : Input) (choices : List GroupChoice) (id : Nat) :
     Option RapidCountBasis := do
@@ -618,7 +874,8 @@ private def Input.rapidBasis (c : Input) (choices : List GroupChoice) (id : Nat)
       | _ => false).length
     return if 2 ≤ count then .bundled .tumorMarker else .individual
   | .tumorTissue .sensitivity => some .individual
-  | .tumorTissue _ | .hepatitis _ | .specificIge _ | .viralTiter _ | .classTiter _ _ | .autoantibody _ =>
+  | .tumorTissue _ | .rhFactor _ | .hepatitis _ | .specificIge _ | .viralTiter _
+  | .classTiter _ _ | .autoantibody _ =>
     some (.other (c.rapidOtherBasis id))
   | .individual test =>
     if test.major == 6 && [4, 12, 27].contains test.suffix then
@@ -650,7 +907,7 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
       !c.rows.all (fun p => p.item.supported && p.site == c.site &&
       c.eligible p.id == some true) || ids.eraseDups != ids || c.additions.site != c.site then none
   else
-    let choices ← resolveChoices (← c.groups) selected
+    let choices ← c.resolveDayChoices selected
     if c.morphology.length != (c.morphology.map (·.item.item)).eraseDups.length ||
         c.urine.length > 1 then none else
       let urine ← c.urine.mapM fun p =>
@@ -681,15 +938,17 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
       let morphology ← c.morphologyPoints choices
       let draws ← c.chemistryDraws choices
       let extra ← c.extraBundlePoints choices
+      let ketones ← (c.ketones.filter fun p => retained choices p.id).mapM
+        (fun p => p.item.scheduledPoints)
       let pag := c.rows.filterMap fun p => match p.item with
         | .alpPag =>
           if retained choices p.id then some (BloodChemistryLate.Item.points .alpIsoenzymesPag) else none
         | _ => none
       let individuals ← c.individuals choices
-      let directPoints ← individualPoints individuals
+      let directPoints ← c.individualPoints individuals
       let execution := (draws.map fun (_, items) => BloodChemistry.pointsForItems items) ++
         morphology ++ urine ++ specialUrine ++ sediment ++ fecal ++ punctureFluid ++ sensitivity ++ extra ++ pag ++
-        directPoints
+        ketones ++ directPoints
       let tests := c.tests choices
       let day ← Day.withTests ⟨[], [], c.judgment, c.additions⟩ tests
       let day ← c.checkedRapid choices day tests
@@ -791,6 +1050,88 @@ theorem determines (c : Input) (selected : Option (List Nat)) (scope : c.Scope s
 def Input.Allowed (c : Input) (r : Breakdown) : Prop :=
   ∃ selected, c.Scope selected ∧ c.Permits selected r
 
+/-- 読みを固定した日について、自由選択による内訳は有限なリストに全て含まれる。 -/
+theorem allowed_finite (c : Input) :
+    ∃ results : List Breakdown, ∀ r, c.Allowed r → r ∈ results := by
+  classical
+  -- 群の生成に失敗した場合は、定義域に入る選択がない。
+  let candidates : List (Option (List Nat)) := none ::
+    (consistentSelections (c.groups.getD []) [] []).map some
+  let result (choice : Option (List Nat)) : Option Breakdown :=
+    if h : ∃ r, c.Scope choice ∧ c.Permits choice r then some (Classical.choose h) else none
+  refine ⟨candidates.filterMap result, ?_⟩
+  rintro r ⟨selected, scope, allowed⟩
+  obtain ⟨supported, prep, execution, day, prepared, collected, confirmed⟩ := scope
+  have resolved : ∃ choices, c.resolveDayChoices selected = some choices := by
+    cases h : c.resolveDayChoices selected with
+    | none =>
+      simp [Input.prepare, Input.prepareFacts, h] at prepared
+    | some choices => exact ⟨choices, rfl⟩
+  obtain ⟨choices, resolved⟩ := resolved
+  cases hg : c.groups with
+  | none => simp [Input.resolveDayChoices, hg] at resolved
+  | some groups =>
+    cases hf : resolveChoices groups selected with
+    | none =>
+      cases hd : c.directedChoices with
+      | none => simp [Input.resolveDayChoices, hg, hd] at resolved
+      | some directed =>
+        simp [Input.resolveDayChoices, hg, hd, hf] at resolved
+    | some free =>
+      obtain ⟨candidate, member, same⟩ := resolveChoices_canonical groups selected hf
+      have eq : c.resolveDayChoices candidate = c.resolveDayChoices selected := by
+        cases hd : c.directedChoices <;> simp [Input.resolveDayChoices, hg, hd, hf, same]
+      have prepareEq : c.prepare candidate = c.prepare selected := by
+        simp [Input.prepare, Input.prepareFacts, eq]
+      have scope' : c.Scope candidate :=
+        ⟨supported, prep, execution, day, prepareEq.trans prepared, collected, confirmed⟩
+      have allowed' : c.Permits candidate r := by
+        simpa [Input.Permits, prepareEq] using allowed
+      have existsResult : ∃ b, c.Scope candidate ∧ c.Permits candidate b :=
+        ⟨r, scope', allowed'⟩
+      have unique := (determines c candidate scope').choose_spec.2
+      have eqResult : Classical.choose existsResult = r :=
+        (unique _ (Classical.choose_spec existsResult).2).trans (unique _ allowed').symm
+      exact List.mem_filterMap.mpr
+        ⟨candidate, by simpa [candidates, hg] using member,
+          by unfold result; rw [dite_eq_left existsResult, eqResult]⟩
+
+/-- この日次経路で実装した読みの組合せ。基礎となる適格性と履歴は固定する。 -/
+def Input.readingAlternatives (c : Input) : List Input := Id.run do
+  let units := [none, some CotestReading.simultaneous, some .specimen, some .day]
+  let counts := [none, some HepatitisCountReading.performed, some .retained]
+  let mut alternatives := []
+  for cholesterol in units do
+    for protein in units do
+      for ketone in units do
+        for hepatitis in counts do
+          alternatives := { c with
+            cholesterolReading := cholesterol
+            proteinReading := protein
+            ketoneReading := ketone
+            hepatitisCountReading := hepatitis } :: alternatives
+  return alternatives
+
+def Input.AllowedReadings (c : Input) (r : Breakdown) : Prop :=
+  ∃ candidate ∈ c.readingAlternatives, candidate.Allowed r
+
+theorem allowed_readings_finite (c : Input) :
+    ∃ results : List Breakdown, ∀ r, c.AllowedReadings r → r ∈ results := by
+  have cover (inputs : List Input) :
+      ∃ results : List Breakdown, ∀ r, (∃ input ∈ inputs, input.Allowed r) →
+        r ∈ results := by
+    induction inputs with
+    | nil => exact ⟨[], by simp⟩
+    | cons input rest ih =>
+      obtain ⟨head, hhead⟩ := allowed_finite input
+      obtain ⟨tail, htail⟩ := ih
+      refine ⟨head ++ tail, ?_⟩
+      rintro r ⟨candidate, h, allowed⟩
+      rcases List.mem_cons.mp h with rfl | member
+      · exact List.mem_append.mpr (Or.inl (hhead r allowed))
+      · exact List.mem_append.mpr (Or.inr (htail r ⟨candidate, member, allowed⟩))
+  exact cover c.readingAlternatives
+
 /-- 加算なしの範囲で使う計算射影。判断料・採取の未確定は伝播する。 -/
 def Input.withoutAdditions (c : Input) (selected : Option (List Nat)) : Option Breakdown := do
   let (prep, execution) ← c.prepare selected
@@ -851,7 +1192,7 @@ theorem without_additions_sound (c : Input) (selected : Option (List Nat))
 -- 複数区分の合成例はカーネルで簡約して検査する。
 section
 set_option maxRecDepth 4096
-private def site : Site := ⟨1, 2, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩
+private def site : Site := ⟨1, 2, ⟨⟨2026, 10⟩, ⟨22, by decide⟩⟩⟩
 
 private def base : Input where
   judgment := ⟨⟨site, [], false, ⟨⟨site.monthScope, []⟩, by simp⟩, ⟨site.monthScope, []⟩⟩,
@@ -868,7 +1209,7 @@ private def base : Input where
   emergency := fun _ => none
   rapid := fun _ => none
 
-private def urineDaySite : Site := ⟨1, 2, ⟨⟨2026, 9⟩, ⟨21, by decide⟩⟩⟩
+private def urineDaySite : Site := ⟨1, 2, ⟨⟨2026, 10⟩, ⟨22, by decide⟩⟩⟩
 
 private def urineDayBase : Input :=
   { base with
@@ -1150,6 +1491,54 @@ example :
     (sevenCategoryDay.withoutAdditions (some [20, 33, 70])).map
       (fun r => (r.execution, r.judgment, r.collection, r.total.specimenWithCollection)) =
     some ([93, 26, 7, 25, 600, 290, 105, 180, 2520, 377], 841, [40, 312], 5416) := by decide
+
+private def generatedGroupsDay : Input :=
+  let newRows : List (Performance Item) :=
+    [{ id := 90, site := urineDaySite, item := .chemistry .hdlCholesterol, draw := some 2,
+       simultaneous := some 3 },
+     { id := 91, site := urineDaySite, item := .chemistry .totalCholesterol, draw := some 2,
+       simultaneous := some 3 },
+     { id := 92, site := urineDaySite, item := .chemistry .ldlCholesterol, draw := some 2,
+       simultaneous := some 4 },
+     { id := 93, site := urineDaySite, item := .hepatitis .hbcAntibody, draw := some 3,
+       simultaneous := some 5 },
+     { id := 94, site := urineDaySite, item := .hepatitis .hbcIgM, draw := some 3,
+       simultaneous := some 5 },
+     { id := 95, site := urineDaySite, item := .hepatitis .hbeAntigen, draw := some 3 },
+     { id := 96, site := urineDaySite, item := .ketone .ketoneBodies },
+     { id := 97, site := urineDaySite, item := .ketone .ketoneFractions }]
+  { sevenCategoryDay with
+    rows := sevenCategoryDay.rows ++ newRows
+    cholesterolReading := some .day
+    ketoneReading := some .day
+    hepatitisCountReading := some .retained }
+
+example :
+    let rows : List (Performance Item) :=
+      [{ id := 1, site, item := .rhFactor 1, specimen := some 1 },
+       { id := 2, site, item := .rhFactor 2, specimen := some 1 },
+       { id := 3, site, item := .rhFactor 1, specimen := some 2 }]
+    (({ base with rows := rows }).withoutAdditions none).map Breakdown.execution =
+      some [163, 163] := by decide
+
+example :
+    let row : Performance Item := { id := 1, site, item := .rhFactor 1 }
+    (({ base with rows := [row] }).prepare none).isNone := by decide
+
+example : total generatedGroupsDay (some [20, 33, 70, 90, 91, 93]) = some 5737 := by decide
+example : total generatedGroupsDay (some [20, 33, 70, 91, 92, 94]) = some 5754 := by decide
+example :
+    total { generatedGroupsDay with cholesterolReading := some .simultaneous }
+      (some [20, 33, 70, 93]) = some 5755 := by decide
+example :
+    total { generatedGroupsDay with hepatitisCountReading := some .performed }
+      (some [20, 33, 70, 90, 91, 93]) = some 5799 := by decide
+example :
+    total { generatedGroupsDay with cholesterolReading := none }
+      (some [20, 33, 70, 90, 91, 93]) = none := by decide
+example :
+    total { generatedGroupsDay with hepatitisCountReading := none }
+      (some [20, 33, 70, 90, 91, 93]) = none := by decide
 
 example : (sevenCategoryDay.withoutAdditions none).isNone := by decide
 

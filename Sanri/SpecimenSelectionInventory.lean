@@ -93,8 +93,8 @@ def inventory : List Entry := [
     [("D007", "hdlCholesterol"), ("D007", "ldlCholesterol"), ("D007", "totalCholesterol")] true (some false),
   entry "notice/D007/paragraph/7" .unresolved (some (3, 2))
     [("D007", "albumin"), ("D007", "proteinFractionation"), ("D007", "totalProtein")] true (some false),
-  entry "notice/D007/paragraph/9" .unresolved none
-    [("D007", "ketoneBodies"), ("D007", "ketoneFractions")],
+  entry "notice/D007/paragraph/9" .unresolved (some (2, 1))
+    [("D007", "ketoneBodies"), ("D007", "ketoneFractions")] true (some true),
   entry "notice/D007/paragraph/12" .specimen none
     [("D007", "bicarbonate"), ("D007", "bloodGas")],
   entry "notice/D007/paragraph/15" .simultaneous none
@@ -213,9 +213,9 @@ def inventory : List Entry := [
     [("D012", "toxoplasmaAntibody"), ("D012", "toxoplasmaAvidity")],
   entry "notice/D012/paragraph/59" .unresolved none
     [("D012", "hiv1WesternBlot"), ("D012", "hiv2WesternBlot"), ("D012", "hivSpecific")],
-  entry "notice/D013/paragraph/5" .simultaneous none
+  entry "notice/D013/paragraph/5" .simultaneous (some (2, 1))
     [("D013", "hbcAntibody"), ("D013", "hbcIgM")],
-  entry "notice/D013/paragraph/6" .simultaneous none
+  entry "notice/D013/paragraph/6" .simultaneous (some (2, 1))
     [("D013", "haAntibody"), ("D013", "haIgM")],
   entry "notice/D013/paragraph/8" .simultaneous none
     [("D013", "hbcrAntigen"), ("D023", "hbvQuantity")],
@@ -334,9 +334,9 @@ def Entry.evidence (g : Entry) : Evidence :=
   | "notice/D006-27/paragraph/10/u" => ⟨some "併せて行った", none, false⟩
   | "notice/D007/paragraph/2" => ⟨some "同時", some "chemistryCombinationGroup", true⟩
   | "notice/D007/paragraph/3" => ⟨some "同時", some "chemistryCombinationGroup", true⟩
-  | "notice/D007/paragraph/5" => ⟨some "併せて測定", some "chemistryCombinationGroup", false⟩
-  | "notice/D007/paragraph/7" => ⟨some "併せて測定", some "chemistryCombinationGroup", false⟩
-  | "notice/D007/paragraph/9" => ⟨some "併せて実施", some "chemistryPriorityGroup", false⟩
+  | "notice/D007/paragraph/5" => ⟨some "併せて測定", some "chemistryCombinationProjection", true⟩
+  | "notice/D007/paragraph/7" => ⟨some "併せて測定", some "chemistryCombinationProjection", true⟩
+  | "notice/D007/paragraph/9" => ⟨some "併せて実施", some "chemistryPriorityGroup", true⟩
   | "notice/D007/paragraph/12" => ⟨some "同一検体", some "chemistryPriorityGroup", false⟩
   | "notice/D007/paragraph/15" => ⟨some "同時", some "chemistryPairChoice", false⟩
   | "notice/D007/paragraph/17/e" => ⟨some "同一検体", some "carnitineChoice", false⟩
@@ -389,8 +389,8 @@ def Entry.evidence (g : Entry) : Evidence :=
   | "notice/D012/paragraph/43/i" => ⟨some "併せて実施", some "infectionGroup", false⟩
   | "notice/D012/paragraph/48/e" => ⟨some "併せて実施", some "infectionGroup", false⟩
   | "notice/D012/paragraph/56" => ⟨some "併せて実施", some "infectionGroup", false⟩
-  | "notice/D013/paragraph/5" => ⟨some "同時", some "hepatitisGroup", false⟩
-  | "notice/D013/paragraph/6" => ⟨some "同時", some "hepatitisGroup", false⟩
+  | "notice/D013/paragraph/5" => ⟨some "同時", some "hepatitisGroup", true⟩
+  | "notice/D013/paragraph/6" => ⟨some "同時", some "hepatitisGroup", true⟩
   | "notice/D013/paragraph/8" => ⟨some "同時", some "hepatitisDnaGroup", false⟩
   | "notice/D014/paragraph/1" => ⟨some "併せて実施", none, false⟩
   | "notice/D014/paragraph/2" => ⟨some "併せて実施", none, false⟩
@@ -436,6 +436,18 @@ def Entry.evidence (g : Entry) : Evidence :=
   | "notice/D023/paragraph/10/i" => ⟨some "併せて実施", none, false⟩
   | "notice/D023/paragraph/16/u" => ⟨some "廃液を検体として", none, false⟩
   | _ => {}
+
+inductive GenerationStatus where
+  | raw | reading | confirmed | pending
+  deriving DecidableEq
+
+/-- 日次での適用群の取得方法。群の一部を生成する経路を含む。 -/
+def Entry.generation (g : Entry) : GenerationStatus :=
+  match g.id with
+  | "notice/D007/paragraph/5" | "notice/D007/paragraph/7" | "notice/D007/paragraph/9" => .reading
+  | "notice/D002/paragraph/5" | "notice/D006-24/paragraph/2" | "notice/D008/paragraph/16" =>
+    .confirmed
+  | _ => if g.evidence.rawGeneration then .raw else .pending
 
 /-- 外部照合の項目対に展開する前に残る識別。 -/
 def Entry.memberGap (g : Entry) : Option String :=

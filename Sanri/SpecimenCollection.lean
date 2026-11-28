@@ -567,6 +567,14 @@ example :
     let a := req .adrenalVenousSampling
     let b := { a with filmPoints := 25 }
     assessDay [a, b] = none ∧ assessDay [b, a] = none := by decide
+/-- 共通の日次枠、別の一連枠、既算定、手術中の採取を混ぜた合成日。 -/
+example :
+    let daily := req .venousBlood
+    let prior := { daily with dailyAlreadyClaimed := true }
+    let series := { req .gastricDuodenalFluid with seriesId := 2 }
+    let bundled := { req .lumbarPuncture with duringSurgery := true }
+    ((assessDay [daily, prior, series, bundled, daily]).bind fun a =>
+      (assessDay [bundled, daily, daily, series, prior]).map a.isPerm) = some true := by decide
 example : ((assess { req .venousBlood with duringSurgery := true }).bind
     (fun a => a.toCollection 400)) = none := by decide
 example : ((assess { req .adrenalVenousSampling with filmPoints := 25 }).bind

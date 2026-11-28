@@ -733,21 +733,30 @@ theorem pancreaticChoice_projects (urine : D001.Context) (marker : D009.Context)
 inductive ChemistryCombination where
   | calcium | ironBinding | cholesterol | protein
 
+/-- 条項別の組合せ候補から、実施IDに算定件数を射影する。
+単位の照合は呼出側で行う。 -/
+def chemistryCombinationProjection (kind : ChemistryCombination)
+    (rows : List (Performance BloodChemistry.Item)) : Option ChoiceGroup :=
+  let (source, items, count) := match kind with
+    | .calcium => (BloodChemistry.calciumRule.source, BloodChemistry.calciumGroup, 1)
+    | .ironBinding => (BloodChemistry.ironBindingRule.source, BloodChemistry.ironBindingGroup, 1)
+    | .cholesterol => (BloodChemistry.cholesterolRule.source, BloodChemistry.cholesterolGroup, 2)
+    | .protein => (BloodChemistry.proteinRule.source, BloodChemistry.proteinGroup, 2)
+  let ids := rows.map Performance.id
+  if ids.eraseDups != ids || !(rows.map Performance.item).isPerm items then none
+  else some ⟨source, ids, count⟩
+
 /-- D007(2)(3)(5)(7)。適格性と併測を確認した一採血の候補を受ける。
 同時を明記する二条項では同時実施IDも照合する。 -/
 def chemistryCombinationGroup (kind : ChemistryCombination)
     (rows : List (Performance BloodChemistry.Item)) : Option ChoiceGroup := do
-  let (source, items, count, simultaneous) := match kind with
-    | .calcium => (BloodChemistry.calciumRule.source, BloodChemistry.calciumGroup, 1, true)
-    | .ironBinding => (BloodChemistry.ironBindingRule.source, BloodChemistry.ironBindingGroup, 1, true)
-    | .cholesterol => (BloodChemistry.cholesterolRule.source, BloodChemistry.cholesterolGroup, 2, false)
-    | .protein => (BloodChemistry.proteinRule.source, BloodChemistry.proteinGroup, 2, false)
   let anchor :: rest := rows | none
-  let ids := rows.map Performance.id
-  if ids.eraseDups != ids || !(rows.map Performance.item).isPerm items ||
-      !rest.all (fun row => anchor.site == row.site && anchor.sameDraw row == some true &&
-        (!simultaneous || anchor.simultaneousWith row == some true)) then none
-  else some ⟨source, ids, count⟩
+  let simultaneous := match kind with
+    | .calcium | .ironBinding => true
+    | .cholesterol | .protein => false
+  if !rest.all (fun row => anchor.site == row.site && anchor.sameDraw row == some true &&
+      (!simultaneous || anchor.simultaneousWith row == some true)) then none
+  else chemistryCombinationProjection kind rows
 
 /-- D007(9)(12)は残す側を明記する。ケトン体は確認済みの併施を受け、
 重炭酸塩と血液ガスでは同一検体の条件も使う。 -/
