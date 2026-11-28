@@ -65,8 +65,8 @@ def inventory : List Entry := [
     [("D005", "bloodMicroorganisms"), ("D005", "dnaContainingRedCellCount")],
   entry "notice/D005/paragraph/9" .month none
     [("D005", "hemoglobinA1c"), ("D007", "anhydroglucitol"), ("D007", "glycatedAlbumin")],
-  entry "notice/D006/paragraph/8/i" .simultaneous none
-    [("D006", "fibrinMonomer"), ("D006", "prothrombinFragment"), ("D006", "tat")],
+  entry "notice/D006/paragraph/8/i" .simultaneous (some (2, 1))
+    [("D006", "fibrinMonomer"), ("D006", "prothrombinFragment"), ("D006", "tat")] true (some false),
   entry "primary/D006-4/note/2" .draw none
     [],
   entry "notice/D006-10/paragraph/unnumbered" .unresolved none
@@ -95,10 +95,10 @@ def inventory : List Entry := [
     [("D007", "albumin"), ("D007", "proteinFractionation"), ("D007", "totalProtein")] true (some false),
   entry "notice/D007/paragraph/9" .unresolved (some (2, 1))
     [("D007", "ketoneBodies"), ("D007", "ketoneFractions")] true (some true),
-  entry "notice/D007/paragraph/12" .specimen none
-    [("D007", "bicarbonate"), ("D007", "bloodGas")],
-  entry "notice/D007/paragraph/15" .simultaneous none
-    [("D007", "bileAcids"), ("D007", "urinarySulfatedBileAcids")],
+  entry "notice/D007/paragraph/12" .specimen (some (2, 1))
+    [("D007", "bicarbonate"), ("D007", "bloodGas")] true (some true),
+  entry "notice/D007/paragraph/15" .simultaneous (some (2, 1))
+    [("D007", "bileAcids"), ("D007", "urinarySulfatedBileAcids")] true (some false),
   entry "notice/D007/paragraph/17/e" .specimen none
     [("D007", "freeCarnitine"), ("D007", "totalCarnitine"), ("D010", "8/ha"), ("D010", "8/i"), ("D010", "8/ni"), ("D010", "8/ro")],
   entry "notice/D007/paragraph/18" .unresolved none
@@ -214,9 +214,9 @@ def inventory : List Entry := [
   entry "notice/D012/paragraph/59" .unresolved none
     [("D012", "hiv1WesternBlot"), ("D012", "hiv2WesternBlot"), ("D012", "hivSpecific")],
   entry "notice/D013/paragraph/5" .simultaneous (some (2, 1))
-    [("D013", "hbcAntibody"), ("D013", "hbcIgM")],
+    [("D013", "hbcAntibody"), ("D013", "hbcIgM")] true (some false),
   entry "notice/D013/paragraph/6" .simultaneous (some (2, 1))
-    [("D013", "haAntibody"), ("D013", "haIgM")],
+    [("D013", "haAntibody"), ("D013", "haIgM")] true (some false),
   entry "notice/D013/paragraph/8" .simultaneous none
     [("D013", "hbcrAntigen"), ("D023", "hbvQuantity")],
   entry "notice/D014/paragraph/1" .unresolved (some (3, 2))
@@ -260,9 +260,11 @@ def inventory : List Entry := [
   entry "notice/D017/paragraph/2" .examination none
     [("D017", "heatedAmoeba"), ("D017", "otherMicroscopy"), ("D017", "specializedMicroscopy")],
   entry "notice/D018/paragraph/1/e" .organism none
-    [("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "respiratory")],
+    [("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"),
+      ("D018", "other"), ("D018", "respiratory")],
   entry "notice/D018/paragraph/1/u" .specimen none
-    [("D018", "gastrointestinal"), ("D018", "genitourinary"), ("D018", "respiratory"), ("D018", "simple")],
+    [("D018", "bloodOrPuncture"), ("D018", "gastrointestinal"), ("D018", "genitourinary"),
+      ("D018", "other"), ("D018", "respiratory"), ("D018", "simple")] true (some true),
   entry "notice/D023/paragraph/1/a" .unresolved none
     [("D012", "trachomatisAntigen"), ("D023", "trachomatis")],
   entry "notice/D023/paragraph/2/a" .unresolved none

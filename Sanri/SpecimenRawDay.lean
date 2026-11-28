@@ -1,4 +1,4 @@
-import Sanri.SpecimenSelectionInventory
+import Sanri.SpecimenSelectionGeneration
 import Sanri.SpecimenRawIndividual
 
 namespace Sanri.MedicalFee.SpecimenRawDay
@@ -17,6 +17,7 @@ inductive Item where
   | ketone (item : BloodChemistryFurther.Item)
   | coagulation (item : D006.Item)
   | endocrine (item : D008.Item)
+  | geneticDisease (disease : Nat)
   | alpPag
   | tumorMarker (item : D009.Item)
   /-- D011の項3に該当すると確認したRh因子。 -/
@@ -54,7 +55,7 @@ def Item.supported : Item → Bool
   | .coagulation i => [D006.Item.antithrombinActivity, .pic, .dDimer,
       .tat, .prothrombinFragment].contains i
   | .endocrine i => [D008.Item.fsh, .lh, .cortisol, .bap].contains i
-  | .alpPag => true
+  | .alpPag | .geneticDisease _ => true
   | .tumorMarker i => [4, 5, 13].contains i.number && i.variant == 0
   | .rhFactor _ => true
   | .hepatitis i => [D013.Item.hbeAntigen, .hbeAntibody, .hcvAntibody,
@@ -107,6 +108,16 @@ theorem cotest_reading_members (anchor : Performance α) (rows : List (Performan
 inductive HepatitisCountReading where
   | performed | retained
 
+/-- 方法をまとめる一連の条項。同じ一連でもD016は項ごとに別とする。 -/
+private def seriesRule (test : SpecimenJudgment.Test) : Option (BundleRoute × SourceRef) :=
+  if test.major == 16 && test.suffix == 0 && [2, 4, 5].contains test.number then
+    some (⟨16, test.number, .series⟩, D016.seriesRule.source)
+  else if test.major == 17 && test.suffix == 0 then
+    some (⟨17, 0, .series⟩, D017.oneExamination.source)
+  else if test == D021.judgmentTest then
+    some (⟨21, 0, .series⟩, D021.indication.source)
+  else none
+
 /-- 検査一覧と、その日を評価するための確認済みの入力。
 判断料の対象一覧と加算の検査一覧は実施から組み立てる。採取条件・履歴は別入力。 -/
 structure Input where
@@ -151,6 +162,13 @@ structure Input where
   punctureFluidFacts : (p : Performance D004.Item) →
     Option ({ ctx : D004.Context // ctx.item = p.item ∧ D004.Eligible ctx } ×
       SpecimenJudgment.Category) := fun _ => none
+  /-- 疾患分類と検査法を原実施に対応付け、採取単位の主検査を指定する。 -/
+  geneticExamination : (p : Performance Nat) →
+    Option { e : D006Genetic.Examination // e.performance = p } := fun _ => none
+  geneticPrincipal : Nat → Option Nat := fun _ => none
+  geneticContext : Nat → Option D006Genetic.Context := fun _ => none
+  geneticEligible : (ctx : D006Genetic.Context) →
+    Option (PLift (D006Genetic.Eligible ctx)) := fun _ => none
   /-- 同じ採取の原実施を、確認済みの同一がん種・検査種の群に対応付ける。 -/
   tumorTissueGroup : (rows : List (Performance D004Tumor.Item)) →
     Option { g : D004Tumor.Group // g.Valid ∧ g.tests.map (·.test.performance) = rows } :=
@@ -169,6 +187,10 @@ structure Input where
   /-- 当日の候補を含め、個別料を変更する別の適用群がないことの確認。
   区分別コンテキストで処理済みの条件は、その確認内容を含む。 -/
   individualStandalone : Nat → Option Bool := fun _ => none
+  /-- 重複成分で群が発動しないことを区分別の適用条件まで照合した入力。 -/
+  inactiveSelection : String → Option Bool := fun _ => none
+  /-- 一連の院内履歴を確認し、原実施群から今回算定候補を選べることを確認する。 -/
+  seriesConfirmed : BundleKey → Bool := fun _ => false
   /-- D006-24(2)の併施範囲を確認した当日の候補。 -/
   lungPanelTogether : List (D006Targeted.LungPanel.Context ×
     List (Performance D006Targeted.LungPanel.Counterpart)) := []
@@ -288,14 +310,57 @@ theorem puncture_fluid_projection (ctx : D004.Context) (eligible : D004.Eligible
   rw [D004.satisfies_iff, and_iff_right eligible]
 
 /-- 同じ同時実施群は最小の実施IDから一度だけ列挙する。 -/
+private def CotestReading.generationReading : CotestReading → SpecimenSelectionGeneration.Reading
+  | .simultaneous => .simultaneous
+  | .specimen => .specimen
+  | .day => .day
+
+private def generateGroups (clause : String) (rows : List (Performance α)) (key : α → String)
+    (division : String) (reading : Option CotestReading := none) :
+    Option (List SpecimenSelectionGeneration.Instance) := do
+  let entry ← SpecimenSelectionInventory.inventory.find? (·.id == clause)
+  let indexed := rows.map fun row => { row with item := (division, key row.item) }
+  (SpecimenSelectionGeneration.generate entry indexed
+    (fun _ => reading.map CotestReading.generationReading)).toOption
+
+private def groupProjection (generated : SpecimenSelectionGeneration.Instance)
+    (existing : ChoiceGroup) : Option ChoiceGroup :=
+  let ids := generated.members.map Performance.id
+  if generated.limit == existing.count && ids.isPerm existing.members then
+    some { existing with members := ids }
+  else none
+
+private theorem group_projection_spec
+    {generated : SpecimenSelectionGeneration.Instance} {existing projected : ChoiceGroup}
+    (h : groupProjection generated existing = some projected) :
+    projected.source = existing.source ∧ projected.count = generated.limit ∧
+      projected.members = generated.members.map Performance.id ∧
+      projected.members.Perm existing.members := by
+  unfold groupProjection at h
+  dsimp only at h
+  split at h
+  · rename_i agreed
+    simp only [Bool.and_eq_true, beq_iff_eq, List.isPerm_iff] at agreed
+    obtain rfl := Option.some.inj h.symm
+    exact ⟨rfl, agreed.1.symm, rfl, agreed.2⟩
+  · contradiction
+
+def renalKey : UrineFecalTests.UrineSpecial → String
+  | .albuminQuantitative => "albuminQuantitative"
+  | .transferrin => "transferrin"
+  | .typeIVCollagen => "typeIVCollagen"
+  | _ => ""
+
 private def Input.renalGroups (c : Input) : Option (List ChoiceGroup) := do
-  let rows := c.specialUrine
-  let perRow ← rows.mapM fun p => renalSimultaneousGroup { performance := p } rows
-  let groups := (rows.zip perRow).flatMap fun (p, groups) =>
-    groups.filter fun g => g.members.all (p.id ≤ ·)
-  if groups.any (fun g =>
-      let items := (rows.filter fun p => g.members.contains p.id).map Performance.item
-      items.eraseDups.length != items.length) then none else some groups
+  let rows := c.specialUrine.filter (D001.renalItem ∘ Performance.item)
+  if rows.length < 2 then return []
+  let groups ← generateGroups D001.renalRule.id rows renalKey "D001"
+  groups.mapM fun group => do
+    let typed ← group.members.mapM fun p => rows.find? (·.id == p.id)
+    let anchor :: _ := typed | none
+    if (typed.map Performance.item).eraseDups.length != typed.length then none else
+      let [existing] ← renalSimultaneousGroup { performance := anchor } typed | none
+      groupProjection group existing
 
 private def Input.coagulation (c : Input) : List (Performance D006.Item) :=
   c.rows.filterMap fun p => match p.item with
@@ -316,7 +381,7 @@ private def morphologyKey : BloodMorphology.Item → String
   | .microscopicDifferential => "microscopicDifferential"
   | _ => ""
 
-private def chemistryKey : BloodChemistry.Item → String
+def chemistryKey : BloodChemistry.Item → String
   | .calcium => "calcium"
   | .ionizedCalcium => "ionizedCalcium"
   | .uibcColorimetric => "uibcColorimetric"
@@ -366,22 +431,27 @@ private def Input.lungPanelGroups (c : Input) : Option (List ChoiceGroup) := do
           lungPanelGroup context surveyed
     return groups.flatten
 
-/-- 一つの項目が複数の二件群に入るD005(3)の読みはここでは未確定とする。 -/
-private def Input.chemistryTriple (c : Input) (reading : Option CotestReading)
-    (kind : ChemistryCombination) (clause : String)
-    (keys : List BloodChemistry.Item) : Option (List ChoiceGroup) := do
+private def Input.chemistryGroups (c : Input) (reading : Option CotestReading)
+    (kind : ChemistryCombination) (clause : String) (keys : List BloodChemistry.Item) :
+    Option (List ChoiceGroup) := do
   let rows := c.chemistry.filter (fun p => keys.contains p.item)
   if !keys.all (fun item => rows.any (·.item == item)) then return []
-  let reading ← reading
-  let anchorItem :: _ := keys | none
-  let groups ← (rows.filter (·.item == anchorItem)).mapM fun anchor => do
-    let together ← rows.filterM (reading.matches anchor)
-    if !keys.all (fun item => together.any (·.item == item)) then return []
-    let group ← chemistryCombinationProjection kind together
-    let indexed := together.map fun p => { p with item := ("D007", chemistryKey p.item) }
-    let projected ← SpecimenSelectionInventory.checkedProjection clause indexed group
-    return [projected]
-  return groups.flatten
+  let generated ← generateGroups clause rows chemistryKey "D007" reading
+  generated.mapM fun group => do
+    let typed ← group.members.mapM fun p => rows.find? (·.id == p.id)
+    let existing ← match kind with
+      | .calcium | .ironBinding => chemistryCombinationGroup kind typed
+      | .cholesterol | .protein => chemistryCombinationProjection kind typed
+    groupProjection group existing
+
+def hepatitisKey : D013.Item → String
+  | .hbcAntibody => "hbcAntibody"
+  | .hbcIgM => "hbcIgM"
+  | .haAntibody => "haAntibody"
+  | .haIgM => "haIgM"
+  | .hbeAntigen => "hbeAntigen"
+  | .hbcrAntigen => "hbcrAntigen"
+  | _ => ""
 
 private def Input.hepatitisGroups (c : Input) (kind : HepatitisCombination)
     (clause : String) (first second : D013.Item) : Option (List ChoiceGroup) := do
@@ -389,22 +459,47 @@ private def Input.hepatitisGroups (c : Input) (kind : HepatitisCombination)
     match p.item with
     | .hepatitis i => if i == first || i == second then some { p with item := i } else none
     | _ => none
-  if !(rows.any (·.item == first) && rows.any (·.item == second)) then return []
-  let candidates ← (rows.filter (·.item == first)).mapM fun anchor => do
-    let same ← rows.filterM (anchor.simultaneousWith ·)
-    if !same.any (·.item == second) then return []
-    -- 異なる採血にまたがる場合の包括評価は保留する。
-    if !same.all (fun row => anchor.sameDraw row == some true) then none else
-      let group ← hepatitisGroup kind anchor rows
-      let indexed := same.map fun p => { p with item := ("D013", match p.item with
-        | .hbcAntibody => "hbcAntibody"
-        | .hbcIgM => "hbcIgM"
-        | .haAntibody => "haAntibody"
-        | .haIgM => "haIgM"
-        | _ => "") }
-      let projected ← SpecimenSelectionInventory.checkedProjection clause indexed group
-      return [projected]
-  return candidates.flatten.eraseDups
+  if !([first, second].all fun i => rows.any (·.item == i)) then return []
+  let generated ← generateGroups clause rows hepatitisKey "D013"
+  generated.mapM fun group => do
+    let typed ← group.members.mapM fun p => rows.find? (·.id == p.id)
+    let anchor :: _ := typed | none
+    -- 採血による包括の射影は同じ採血内に限定する。
+    if !typed.all (fun row => anchor.sameDraw row == some true) then none else
+      let existing ← hepatitisGroup kind anchor typed
+      groupProjection group existing
+
+def coagulationKey : D006.Item → String
+  | .fibrinMonomer => "fibrinMonomer"
+  | .prothrombinFragment => "prothrombinFragment"
+  | .tat => "tat"
+  | _ => ""
+
+private def Input.coagulationGroups (c : Input) : Option (List ChoiceGroup) := do
+  let rows := c.coagulation.filter (fun row => D006.competingMarkers.contains row.item)
+  if !((rows.map Performance.item).eraseDups.length == rows.length) then none else
+  if rows.length < 2 then return []
+  let generated ← generateGroups D006.markerCombinationRule.id rows coagulationKey "D006"
+  generated.mapM fun group => do
+    let typed ← group.members.mapM fun p => rows.find? (·.id == p.id)
+    let existing ← coagulationMarkerGroup typed
+    groupProjection group existing
+
+private def Input.seriesGroups (c : Input) : Option (List ChoiceGroup) := do
+  let keyed ← (c.rows.filterMap fun row => match row.item with
+    | .individual test => (seriesRule test).map fun (route, source) => (row, route, source)
+    | _ => none).mapM fun (row, route, source) => do
+      let key ← bundleKey route row
+      return (key, source, row.id)
+  let keys := (keyed.map Prod.fst).eraseDups
+  let groups ← keys.mapM fun key => do
+    if !c.seriesConfirmed key then none else
+      let rows := keyed.filter (·.1 == key)
+      let (_, source, _) :: _ := rows | none
+      let ids := rows.map (·.2.2)
+      if ids.length < 2 then return []
+      return [⟨source, ids, 1⟩]
+  return groups.flatten
 
 def Input.groups (c : Input) : Option (List ChoiceGroup) := do
   let morphology ← (pairs c.morphology).mapM fun (left, right) => do
@@ -413,37 +508,24 @@ def Input.groups (c : Input) : Option (List ChoiceGroup) := do
     let existing ← morphologyGroups a b false
     existing.mapM (indexedPair BloodMorphology.eosinophilRule.id a b morphologyKey "D005")
   if !(overlappingGroups morphology.flatten).isEmpty then none else
-    let chemistry ← (pairs c.chemistry).mapM fun (a, b) => do
-      let kind := if [a.item, b.item].isPerm BloodChemistry.calciumGroup then
-          some ("notice/D007/paragraph/2", ChemistryCombination.calcium)
-        else if [a.item, b.item].isPerm BloodChemistry.ironBindingGroup then
-          some ("notice/D007/paragraph/3", ChemistryCombination.ironBinding)
-        else none
-      match kind with
-      | none => return []
-      | some (clause, kind) =>
-        if !(← a.simultaneousWith b) then return []
-        let existing ← chemistryCombinationGroup kind [a, b]
-        let group ← indexedPair clause a b chemistryKey "D007" existing
-        return [group]
-    let markers := c.coagulation.filter (fun p => D006.competingMarkers.contains p.item)
-    if markers.length != (markers.map Performance.item).eraseDups.length then none else
-      let coagulation ← match markers with
-        | [a, b] => (a.simultaneousWith b).bind fun same =>
-          if same then (coagulationMarkerGroup markers).map (· :: []) else some []
-        | _ => some []
-      let alp ← c.alpGroups
-      let sediment ← c.sedimentGroups
-      let renal ← c.renalGroups
-      let lungPanel ← c.lungPanelGroups
-      let cholesterol ← c.chemistryTriple c.cholesterolReading .cholesterol
-        BloodChemistry.cholesterolRule.id BloodChemistry.cholesterolGroup
-      let protein ← c.chemistryTriple c.proteinReading .protein
-        BloodChemistry.proteinRule.id BloodChemistry.proteinGroup
-      let hbCore ← c.hepatitisGroups .hbCore D013.hbCoreChoice.id .hbcAntibody .hbcIgM
-      let ha ← c.hepatitisGroups .ha D013.haChoice.id .haAntibody .haIgM
-      return morphology.flatten ++ chemistry.flatten ++ coagulation ++ alp ++ sediment ++ renal ++
-        lungPanel ++ cholesterol ++ protein ++ hbCore ++ ha
+    let calcium ← c.chemistryGroups none .calcium
+      BloodChemistry.calciumRule.id BloodChemistry.calciumGroup
+    let iron ← c.chemistryGroups none .ironBinding
+      BloodChemistry.ironBindingRule.id BloodChemistry.ironBindingGroup
+    let coagulation ← c.coagulationGroups
+    let alp ← c.alpGroups
+    let sediment ← c.sedimentGroups
+    let renal ← c.renalGroups
+    let lungPanel ← c.lungPanelGroups
+    let cholesterol ← c.chemistryGroups c.cholesterolReading .cholesterol
+      BloodChemistry.cholesterolRule.id BloodChemistry.cholesterolGroup
+    let protein ← c.chemistryGroups c.proteinReading .protein
+      BloodChemistry.proteinRule.id BloodChemistry.proteinGroup
+    let hbCore ← c.hepatitisGroups .hbCore D013.hbCoreChoice.id .hbcAntibody .hbcIgM
+    let ha ← c.hepatitisGroups .ha D013.haChoice.id .haAntibody .haIgM
+    let series ← c.seriesGroups
+    return morphology.flatten ++ calcium ++ iron ++ coagulation ++ alp ++ sediment ++ renal ++
+      lungPanel ++ cholesterol ++ protein ++ hbCore ++ ha ++ series
 
 /-- 指定した採否が全群に共通し、各群の必要件数を満たす場合にだけ射影する。 -/
 def resolveChoices (groups : List ChoiceGroup) (selected : Option (List Nat)) :
@@ -540,17 +622,98 @@ private def Input.ketones (c : Input) : List (Performance BloodChemistryFurther.
     | .ketone item => some { p with item := item }
     | _ => none
 
+def ketoneKey : BloodChemistryFurther.Item → String
+  | .ketoneBodies => "ketoneBodies"
+  | .ketoneFractions => "ketoneFractions"
+  | .bicarbonate => "bicarbonate"
+  | .bloodGas => "bloodGas"
+  | .bileAcids => "bileAcids"
+  | .urinarySulfatedBileAcids => "urinarySulfatedBileAcids"
+  | _ => ""
+
+/-- 型付き項目の集合を、登録索引と照合するための射影。 -/
+def checkedSelectionKeys : List (String × List SpecimenSelectionInventory.ItemKey) :=
+  let keyed {α : Type} (division : String) (key : α → String) (items : List α) :=
+    items.map fun i => (division, key i)
+  let chemistry := keyed "D007" chemistryKey
+  let further := keyed "D007" ketoneKey
+  let hepatitis := keyed "D013" hepatitisKey
+  [(D001.renalRule.id, keyed "D001" renalKey
+      [.albuminQuantitative, .transferrin, .typeIVCollagen]),
+   (D006.markerCombinationRule.id, keyed "D006" coagulationKey D006.competingMarkers),
+   (BloodChemistry.calciumRule.id, chemistry BloodChemistry.calciumGroup),
+   (BloodChemistry.ironBindingRule.id, chemistry BloodChemistry.ironBindingGroup),
+   (BloodChemistry.cholesterolRule.id, chemistry BloodChemistry.cholesterolGroup),
+   (BloodChemistry.proteinRule.id, chemistry BloodChemistry.proteinGroup),
+   ((BloodChemistryFurther.Pair.ketones.rule).id, further [.ketoneBodies, .ketoneFractions]),
+   ((BloodChemistryFurther.Pair.bicarbonateAndBloodGas.rule).id, further [.bicarbonate, .bloodGas]),
+   ((BloodChemistryFurther.Pair.bileAcids.rule).id, further [.bileAcids, .urinarySulfatedBileAcids]),
+   (D013.hbCoreChoice.id, hepatitis [.hbcAntibody, .hbcIgM]),
+   (D013.haChoice.id, hepatitis [.haAntibody, .haIgM])]
+
+private def namedKey (division item : String) : Option SpecimenSelectionInventory.ItemKey :=
+  if item == "" then none else some (division, item)
+
+/-- 区分別評価の識別を使い、明示した項目だけを照合索引へ射影する。 -/
+def Input.selectionRows (c : Input) : List SpecimenSelectionGeneration.Row :=
+  c.rows.filterMap fun row => do
+    let key ← match row.item with
+      | .specialUrine i => namedKey "D001" (renalKey i)
+      | .sediment .microscopy => some ("D002", "microscopy")
+      | .sediment .flow => some ("D002-2", "flow")
+      | .punctureFluid .jointFluid => some ("D004", "jointFluid")
+      | .morphology ctx => namedKey "D005" (morphologyKey ctx.item)
+      | .coagulation i => namedKey "D006" (coagulationKey i)
+      | .chemistry i => namedKey "D007" (chemistryKey i)
+      | .ketone i => namedKey "D007" (ketoneKey i)
+      | .hepatitis i => namedKey "D013" (hepatitisKey i)
+      | .individual test => do
+        let assessed ← c.individualFacts row.id
+        if assessed.performance == { row with item := test } then assessed.selectionKey else none
+      | .other key => some key
+      | _ => none
+    return { row with item := key }
+
+private def overlapClauses : List String :=
+  ["notice/D004/paragraph/1", "primary/D017/note/unnumbered/1",
+   "notice/D007/paragraph/47", "notice/D007/paragraph/48/i", "notice/D012/paragraph/12",
+   "notice/D012/paragraph/28", "notice/D012/paragraph/30", "notice/D012/paragraph/32",
+   "notice/D018/paragraph/1/e", "notice/D018/paragraph/1/u",
+   "notice/D023/paragraph/1/a", "notice/D023/paragraph/2/a", "notice/D023/paragraph/3",
+   "notice/D023/paragraph/5/a"]
+
+/-- 既知の構成項目から三つの重複成分の確認候補を拾う。
+同じ群の複数候補があれば、適用条件を確認するまで日次評価を保留する。 -/
+def Input.pendingOverlap (c : Input) : List String :=
+  let rows := c.selectionRows.filter fun row =>
+    ["D002", "D002-2", "D004", "D012", "D017", "D018", "D023"].contains row.item.1 ||
+      (row.item.1 == "D007" &&
+        ["procalcitoninQuantitative", "procalcitoninSemiquantitative", "presepsin"].contains row.item.2)
+  if rows.length < 2 then [] else
+  (SpecimenSelectionInventory.inventory.filter fun entry =>
+    overlapClauses.contains entry.id && c.inactiveSelection entry.id != some true &&
+      let matched := SpecimenSelectionGeneration.members entry rows
+      if entry.id == "primary/D017/note/unnumbered/1" then
+        matched.any (fun row => row.item.1 == "D017") &&
+          matched.any (fun row => row.item.1 == "D002" || row.item.1 == "D002-2")
+      else if entry.id == "notice/D018/paragraph/1/e" then matched.length ≥ 2
+      else (matched.map Performance.item).eraseDups.length ≥ 2).map (·.id)
+
 /-- D007(9)の算定側は条項から決まる。読みが未指定の併測候補は保留する。 -/
 def Input.directedChoices (c : Input) : Option (List GroupChoice) := do
-  let first := c.ketones.filter (·.item == .ketoneBodies)
-  let second := c.ketones.filter (·.item == .ketoneFractions)
-  if first.isEmpty || second.isEmpty then return []
-  let reading ← c.ketoneReading
-  let choices ← first.flatMap (fun a => second.map (a, ·)) |>.mapM fun (a, b) => do
-    if !(← reading.matches a b) then return []
-    let choice ← chemistryPriorityGroup a b
-    return [choice]
-  return choices.flatten
+  let rows := c.ketones
+  if ![.ketoneBodies, .ketoneFractions].all (fun item => rows.any (·.item == item)) then return []
+  let groups ← generateGroups "notice/D007/paragraph/9" rows ketoneKey "D007" c.ketoneReading
+  groups.mapM fun group => do
+    let .retain retainedKey := group.direction | none
+    let [first, second] := group.members | none
+    let other ← rows.find? fun row =>
+      (row.id == first.id || row.id == second.id) && ("D007", ketoneKey row.item) != retainedKey
+    let retained ← rows.find? fun row =>
+      (row.id == first.id || row.id == second.id) && ("D007", ketoneKey row.item) == retainedKey
+    let existing ← chemistryPriorityGroup other retained
+    let projected ← groupProjection group existing.group
+    return ⟨projected, [retained.id]⟩
 
 theorem ketone_priority_iff (choice : BloodChemistryFurther.Choice) :
     BloodChemistryFurther.Pair.ketones.rule.holds true choice ↔ choice = .second := by
@@ -641,6 +804,7 @@ def Input.assignment (p : Performance Item) : Option BundleKey :=
   match p.item with
   | .tumorTissue .sensitivity => none
   | .tumorTissue _ => bundleKey ⟨4, 2, .draw⟩ p
+  | .geneticDisease _ => bundleKey ⟨6, 4, .draw⟩ p
   | .chemistry _ => bundleKey ⟨7, 0, .draw⟩ p
   | .coagulation _ => bundleKey ⟨6, 0, .draw⟩ p
   | .endocrine _ => bundleKey ⟨8, 0, .draw⟩ p
@@ -651,6 +815,7 @@ def Input.assignment (p : Performance Item) : Option BundleKey :=
   | .viralTiter _ => bundleKey ⟨12, 11, .specimen⟩ p
   | .classTiter _ _ => bundleKey ⟨12, 46, .specimen⟩ p
   | .autoantibody _ => bundleKey ⟨14, 0, .day⟩ p
+  | .individual test => (seriesRule test).bind fun (route, _) => bundleKey route p
   | _ => none
 
 theorem assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKey}
@@ -662,16 +827,42 @@ theorem assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKe
 def Input.bundleAssignment (c : Input) (row : Performance Item) : Option BundleKey := do
   match row.item with
   | .individual test =>
-    let individual ← c.individualFacts row.id
-    if individual.performance != { row with item := test } then none else
-      let item ← individual.plasmaPanelItem
-      plasmaPanelBundleKey { row with item := item }
+    if (seriesRule test).isSome then Input.assignment row else
+      let individual ← c.individualFacts row.id
+      if individual.performance != { row with item := test } then none else
+        let item ← individual.plasmaPanelItem
+        plasmaPanelBundleKey { row with item := item }
   | _ => Input.assignment row
 
 theorem bundle_assignment_disjoint (c : Input) {row : Performance Item} {a b : BundleKey}
     (ha : row ∈ assignedMembers c.bundleAssignment c.rows a)
     (hb : row ∈ assignedMembers c.bundleAssignment c.rows b) : a = b :=
   assigned_members_disjoint _ _ ha hb
+
+/-- 採取IDで原実施を集め、指定された主検査と各実施の疾患分類からD006-4を組み立てる。 -/
+def Input.geneticAssessments (c : Input) : Option (List Individual) := do
+  let rows := c.rows.filter fun row => match row.item with
+    | .geneticDisease _ => true
+    | _ => false
+  let keys ← rows.mapM c.bundleAssignment
+  keys.eraseDups.mapM fun key => do
+    let members ← (assignedMembers c.bundleAssignment rows key).mapM fun row => do
+      let .geneticDisease disease := row.item | none
+      let exam ← c.geneticExamination { row with item := disease }
+      return exam.val
+    let anchor :: _ := members | none
+    let template ← c.geneticContext key.identity
+    let ids := members.map (·.performance.id)
+    let context ← match members with
+      | [single] => do
+        let grade ← single.group
+        some { template with principal := single, item := grade.grade, application := .single }
+      | _ => do
+        let principal ← c.geneticPrincipal key.identity
+        geneticDiseaseDraw anchor.performance members
+          ⟨⟨D006Genetic.bundleRule.source, ids, 1⟩, [principal]⟩ template
+    let proof ← c.geneticEligible context
+    return Individual.d006_4 context proof.down
 
 private def Item.extraBundle : Item → Bool
   | .tumorTissue i => decide (i ≠ .sensitivity)
@@ -877,8 +1068,9 @@ private def Input.rapidBasis (c : Input) (choices : List GroupChoice) (id : Nat)
   | .tumorTissue _ | .rhFactor _ | .hepatitis _ | .specificIge _ | .viralTiter _
   | .classTiter _ _ | .autoantibody _ =>
     some (.other (c.rapidOtherBasis id))
+  | .geneticDisease _ => some (.other (c.rapidOtherBasis id))
   | .individual test =>
-    if test.major == 6 && [4, 12, 27].contains test.suffix then
+    if (seriesRule test).isSome || (test.major == 6 && [4, 12, 27].contains test.suffix) then
       some (.other (c.rapidOtherBasis id))
     else some .individual
   | _ => some .individual
@@ -907,6 +1099,7 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
       !c.rows.all (fun p => p.item.supported && p.site == c.site &&
       c.eligible p.id == some true) || ids.eraseDups != ids || c.additions.site != c.site then none
   else
+    if !c.pendingOverlap.isEmpty then none else
     let choices ← c.resolveDayChoices selected
     if c.morphology.length != (c.morphology.map (·.item.item)).eraseDups.length ||
         c.urine.length > 1 then none else
@@ -946,10 +1139,19 @@ private def Input.prepareFacts (c : Input) (selected : Option (List Nat)) :
         | _ => none
       let individuals ← c.individuals choices
       let directPoints ← c.individualPoints individuals
+      let genetic ← c.geneticAssessments
+      if individuals.any (fun i => i.performance.item.major == 6 && i.performance.item.suffix == 4 &&
+          genetic.any (fun g => g.performance.draw == i.performance.draw)) then none else
+      let geneticTests ← (c.rows.filterMap fun row => match row.item with
+        | .geneticDisease disease => some ({ row with item := disease } : Performance Nat)
+        | _ => none).mapM fun row => do
+          let main ← genetic.find? (fun main => main.performance.draw == row.draw)
+          return c.test row.id main.performance.item
+            (if main.performance.id == row.id then some true else c.excludedJudgmentCandidate)
       let execution := (draws.map fun (_, items) => BloodChemistry.pointsForItems items) ++
         morphology ++ urine ++ specialUrine ++ sediment ++ fecal ++ punctureFluid ++ sensitivity ++ extra ++ pag ++
-        ketones ++ directPoints
-      let tests := c.tests choices
+        ketones ++ directPoints ++ genetic.map Individual.points
+      let tests := c.tests choices ++ geneticTests
       let day ← Day.withTests ⟨[], [], c.judgment, c.additions⟩ tests
       let day ← c.checkedRapid choices day tests
       let _ ← day.judgment.points
@@ -1561,6 +1763,42 @@ example :
       lungPanelTogether := [(panel, [counterpart])] }
     (day.groups.map (List.map ChoiceGroup.members),
       (day.prepare none).isNone) = (some [[1, 2]], true) := by decide
+
+private def seriesExample (id : Nat) (series : Nat) : Individual := by
+  let p : Performance Unit := { id, site, item := (), series := some series }
+  let ctx : D021.Context := ⟨p, some [p]⟩
+  have valid : D021.InScope ctx := by
+    simp [D021.InScope, D021.indication, D021.OneInSeries, ctx, p, Performance.sameSeries,
+      Performance.sameGroup]
+  exact Individual.d021 ctx valid (by simpa [D021.rates, satisfies_cons, satisfies_nil,
+    D021.rate, D021.InScope, D021.indication] using valid)
+
+example :
+    let assessed := seriesExample 2 3
+    let rows : List (Performance Item) :=
+      [{ id := 1, site, item := .individual D021.judgmentTest, series := some 3 },
+       { id := 2, site, item := .individual D021.judgmentTest, series := some 3 }]
+    let c := { base with
+      rows := rows
+      seriesConfirmed := fun key => key.identity == 3
+      individualFacts := fun id => if id == 2 then some assessed else none
+      individualStandalone := fun _ => some true }
+    (c.groups.map (List.map ChoiceGroup.members),
+      (c.withoutAdditions (some [2])).map Breakdown.execution,
+      ({ c with seriesConfirmed := fun _ => false }.prepare (some [2])).isNone) =
+      (some [[1, 2]], some [376], true) := by decide
+
+example :
+    let c := { base with rows :=
+      [{ id := 1, site, item := .other ("D007", "procalcitoninQuantitative") },
+       { id := 2, site, item := .other ("D007", "presepsin") }] }
+    c.pendingOverlap = ["notice/D007/paragraph/48/i"] := by decide
+
+example :
+    let c := { base with rows :=
+      [{ id := 1, site, item := .hepatitis .hbcAntibody, draw := some 1 },
+       { id := 2, site, item := .hepatitis .hbcIgM, draw := some 1, simultaneous := some 3 }] }
+    c.groups.isNone := by decide
 
 private def rapidOnMixedDay : Input :=
   let designated := [30, 31, 32]

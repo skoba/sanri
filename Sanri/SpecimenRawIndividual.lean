@@ -1,5 +1,6 @@
 import Sanri.SpecimenJudgmentRouting
 import Sanri.D023References
+import Sanri.SpecimenSelectionInventory
 
 namespace Sanri.MedicalFee.SpecimenRawDay
 
@@ -11,13 +12,14 @@ structure Individual where
   performance : Performance SpecimenJudgment.Test
   points : Nat
   plasmaPanelItem : Option D006PlasmaPanel.DrawItem := none
+  selectionKey : Option SpecimenSelectionInventory.ItemKey := none
 
 namespace Individual
 
 private def fromRule {Context Result Item : Type} (row : Performance Item)
     (test : SpecimenJudgment.Test) (ctx : Context) (rules : List (Rule Context Result))
     (result : Result) (project : Result → Nat) (_ : Satisfies rules ctx result) : Individual :=
-  ⟨{ row with item := test }, project result, none⟩
+  ⟨{ row with item := test }, project result, none, none⟩
 
 def d006_2 (c : D006Leukemia.D006_2.Context) (row : Performance Unit) (ordinary : SpecimenJudgment.Category)
     (eligible : D006Leukemia.D006_2.Eligible c) (_site : row.site = c.site) : Individual :=
@@ -190,17 +192,40 @@ def d016 (c : D016.Context)
     D016.rates c.performance.item.points id
     ((D016.rate_iff _ _).mpr rfl)
 
+def microscopyKey : D017.Item → String
+  | .specializedMicroscopy => "specializedMicroscopy"
+  | .heatedAmoeba => "heatedAmoeba"
+  | .otherMicroscopy => "otherMicroscopy"
+
+def cultureKey : D018.Item → String
+  | .respiratory => "respiratory"
+  | .gastrointestinal => "gastrointestinal"
+  | .bloodOrPuncture => "bloodOrPuncture"
+  | .genitourinary => "genitourinary"
+  | .other => "other"
+  | .simple => "simple"
+
+def infectionKey : D012.Item → Option String
+  | .endotoxin => some "endotoxin"
+  | .rapidGroupAStrep => some "rapidGroupAStrep"
+  | .ecoliO157Antibody => some "ecoliO157Antibody"
+  | .ecoliO157Antigen => some "ecoliO157Antigen"
+  | .ecoliSerotype => some "ecoliSerotype"
+  | .gonococcusAntigen => some "gonococcusAntigen"
+  | _ => none
+
 def d017 (c : D017.Context) (base extra : Nat)
     (_eligible : D017.InScope c) (rate : Satisfies D017.resultRules c (some (base, extra))) : Individual :=
-  fromRule c.performance (D017.judgmentTest c.performance.item) c
-    D017.resultRules (some (base, extra)) (fun _ => base + extra)
-    rate
+  { fromRule c.performance (D017.judgmentTest c.performance.item) c
+      D017.resultRules (some (base, extra)) (fun _ => base + extra) rate with
+    selectionKey := some ("D017", microscopyKey c.performance.item) }
 
 def d018 (c : D018.Context)
     (_eligible : D018.InScope c) : Individual :=
-  fromRule c.performance (D018.judgmentTest c.performance.item) c
-    D018.resultRules (D018.assessedResult c) (·.total)
-    ((D018.result_iff _ _).mpr rfl)
+  { fromRule c.performance (D018.judgmentTest c.performance.item) c
+      D018.resultRules (D018.assessedResult c) (·.total)
+      ((D018.result_iff _ _).mpr rfl) with
+    selectionKey := some ("D018", cultureKey c.performance.item) }
 
 def d019 (c : D019.Context)
     (eligible : D019.InScope c) : Individual :=
@@ -267,13 +292,16 @@ def d023Anchor : D023.OutpatientTest → Option (Performance Unit)
 def d023 (c : D023.OutpatientInput) (row : Performance D023.OutpatientTest)
     (_test : row.item = c.test) (_eligible : D023.OutpatientEligible c)
     (_anchor : ∀ p, d023Anchor c.test = some p → p = { row with item := () }) : Individual :=
-  ⟨{ row with item := c.test.judgmentTest }, c.points, none⟩
+  let key := match row.item with
+    | .groupStrep _ => some ("D023", "groupAStrep")
+    | _ => none
+  ⟨{ row with item := c.test.judgmentTest }, c.points, none, key⟩
 
 def d023Reference (a : D023References.Assessment) (row : Performance Unit) (p : Nat)
     (_valid : a.Valid) (_id : a.legacy.1 = row.id)
     (_anchor : ∀ c, a = .mycobacteria c → c.performance = row)
     (_rate : a.legacy.2.points = some p) : Individual :=
-  ⟨{ row with item := a.legacy.2.judgmentTest }, p, none⟩
+  ⟨{ row with item := a.legacy.2.judgmentTest }, p, none, none⟩
 
 def d001 (c : D001.Context) (p : Nat) (_eligible : D001.Eligible c)
     (rate : Satisfies D001.rules c p) : Individual :=
@@ -285,7 +313,8 @@ def d003 (c : D003.Context) (p : Nat) (rate : Satisfies D003.rules c p) : Indivi
 def d004 (c : D004.Context) (row : Performance D004.Item)
     (_item : row.item = c.item) (category : SpecimenJudgment.Category) (p : Nat)
     (rate : Satisfies D004.rules c p) : Individual :=
-  fromRule row (D004.judgmentTest c.item category) c D004.rules p id rate
+  { fromRule row (D004.judgmentTest c.item category) c D004.rules p id rate with
+    selectionKey := if row.item == .jointFluid then some ("D004", "jointFluid") else none }
 
 def d004_3 (c : D004Methylation.Context) (row : Performance Unit)
     (_site : row.site = c.site) (category : SpecimenJudgment.Category) (p : Nat)
@@ -308,8 +337,9 @@ def d009 (c : D009.Context) (_eligible : D009.Eligible c) (p : Nat)
 
 def d012 (c : D012.Context) (i : D012.Item) (_item : c.performance.item = .local i)
     (_eligible : D012.Eligible c) : Individual :=
-  fromRule c.performance (D012.judgmentTest i) i D012.rules i.points id
-    ((D012.rate_iff _ _).mpr rfl)
+  { fromRule c.performance (D012.judgmentTest i) i D012.rules i.points id
+      ((D012.rate_iff _ _).mpr rfl) with
+    selectionKey := (infectionKey i).map ("D012", ·) }
 
 def d013 (c : D013.Context) (_eligible : D013.Eligible c) : Individual :=
   fromRule c.performance (D013.judgmentTest c.item) c.item D013.rates c.item.points id

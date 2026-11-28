@@ -31,7 +31,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests
 - [Logic.lean](./Sanri/Logic.lean)：出典付きの独立制約、解の存在・一意性、仕様間の包含・同値・不一致。単なる制約追加では充足不能を解消できないことも証明します。
 - [History.lean](./Sanri/History.lean) と [HistoryConnections.lean](./Sanri/HistoryConnections.lean) は、確認範囲付きの実施・算定履歴から、一採血の包括、暦月・同日・患者通算の算定枠、判断料の初回実施日の確認に使う入力を導きます。
 - [外来血液検査の事例](./Sanri/CaseStudies/OutpatientBloodTests.lean)で、血算・生化学8項目の実施料を検査の実施内容から導き、判断料と静脈採血を含む内訳が、適格項目・履歴・静脈採血の前提が確定した全入力で一意に決まることを証明します。429点の例を含みます。
-- [検体検査の原実施からの日次評価](./Sanri/SpecimenRawDay.lean) では、対象を限定して選択、採血・検体・日単位の包括、区分別の判断料を合成します。基準診療日2026-10-22の外来で、主検査と確認済み履歴を固定した内訳の存在・一意性を証明しています。[対象区分と残件](docs/specimen-cross-division-inventory.md#工程3a-4k)
+- [検体検査の原実施からの日次評価](./Sanri/SpecimenRawDay.lean) では、対象を限定して選択、採血・検体・日単位の包括、区分別の判断料を合成します。基準診療日2026-10-22の外来で、主検査と確認済み履歴を固定した内訳の存在・一意性を証明しています。[対象区分と残件](docs/specimen-cross-division-inventory.md#工程3a-4l)
 - [残尿測定の事例](./Sanri/CaseStudies/ResidualUrine.lean)：患者合計の月上限と、コード別上限・同日背反の表現差を証明します。公式マスター全体の誤りを証明したものではありません。
 - [届出の疑義解釈の事例](./Sanri/CaseStudies/FilingClarification.lean)：令和8年疑義解釈その1・医科問3を、届出の種類に限定して形式化します。加算全体の算定可否は対象外です。
 - [ローカルCSV照合](./tools/audit_residual_urine.py)：版・ハッシュ・出典行を確認して限定した履歴を照合し、結果をGit管理外へ保存します。使い方は [tensuhyo/README.md](./tensuhyo/README.md) を参照してください。

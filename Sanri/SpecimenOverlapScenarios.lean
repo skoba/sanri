@@ -1,4 +1,4 @@
-import Sanri.SpecimenSelectionInventory
+import Sanri.SpecimenSelectionGeneration
 
 namespace Sanri.MedicalFee.SpecimenSelectionInventory
 
@@ -75,6 +75,18 @@ theorem culture_component :
     (oneEach [[1, 2], [2, 3], [1, 5]] [] [6]).isPerm [[1, 3], [2, 5]] ∧
     oneEach pairs [] [6] = [] ∧ deletionCounts pairs [6] = [2, 2, 2, 0] :=
   by decide
+
+/-- 上限の読みを調べる。採否が方向や個別適格性から別に制約される場合は別途確認する。 -/
+private def upperBound (members : List (List Nat)) (chosen : List Nat) : Bool :=
+  members.all fun ids => (ids.filter chosen.contains).length ≤ 1
+
+theorem overlap_upper_bounds_satisfiable :
+    upperBound [[1, 2], [1, 3], [2, 3], [3, 4], [4, 5]] [] = true ∧
+    upperBound [[1, 2], [1, 3], [2, 3], [3, 4], [4, 5]] [1, 4] = true ∧
+    upperBound [[1, 3], [2, 3], [1, 4], [2, 4], [3, 4]] [] = true ∧
+    upperBound [[1, 3], [2, 3], [1, 4], [2, 4], [3, 4]] [1, 2] = true ∧
+    upperBound [[1, 2], [2, 3], [1, 3], [1, 5]] [] = true ∧
+    upperBound [[1, 2], [2, 3], [1, 3], [1, 5]] [3, 5] = true := by decide
 
 private def respiratoryClauses : List String :=
   ["notice/D012/paragraph/2", "notice/D012/paragraph/23", "notice/D012/paragraph/31/i",

@@ -78,6 +78,7 @@ import Sanri.D419Intraocular
 import Sanri.SpecimenOutpatientDay
 import Sanri.SpecimenCrossDivision
 import Sanri.SpecimenSelectionInventory
+import Sanri.SpecimenSelectionGeneration
 import Sanri.SpecimenOverlapScenarios
 import Sanri.SpecimenRawIndividual
 import Sanri.SpecimenRawDay

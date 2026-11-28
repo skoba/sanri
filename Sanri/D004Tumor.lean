@@ -357,6 +357,22 @@ def Group.simple (g : Group) : List Classified :=
 def Group.complex (g : Group) : List Classified :=
   g.tests.filter fun c => c.test.item == .complex
 
+theorem Group.cancer_disjoint {a b : Group} {test : Classified}
+    (ha : a.Valid) (hb : b.Valid) (ma : test ∈ a.tests) (mb : test ∈ b.tests) :
+    a.cancer = b.cancer :=
+  (ha.2.2.2 test ma).2.2.1.symm.trans (hb.2.2.2 test mb).2.2.1
+
+theorem Group.series_disjoint (g : Group) (test : Classified)
+    (h : test ∈ g.simple) : test ∉ g.complex := by
+  simp only [Group.simple, Group.complex, List.mem_filter, Bool.or_eq_true, beq_iff_eq] at *
+  rintro ⟨_, complex⟩
+  rcases h.2 with simple | simple <;> rw [complex] at simple <;> contradiction
+
+theorem Group.series_cover (g : Group) (valid : g.Valid) {test : Classified}
+    (h : test ∈ g.tests) : test ∈ g.simple ∨ test ∈ g.complex := by
+  have numbered := (valid.2.2.2 test h).2.1
+  cases hi : test.test.item <;> simp [Group.simple, Group.complex, hi, h, Item.number] at *
+
 def simpleBundlePoints : Nat → Option Nat
   | 0 | 1 => none
   | 2 => some 4000

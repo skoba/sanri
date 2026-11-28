@@ -651,11 +651,13 @@ for paragraph, scope, anchor, peers in (
 ):
     CHOICES += same_division_choices("markerGroup", "D009", paragraph, scope, (anchor,), peers)
 
-# 例外のある材料を避け、呼吸器・消化管・泌尿生殖器の通常培養から確認する。
+# (1)エの血液例外は項3の穿刺液と区別する。ここでは構成項目対を列挙する。
 CHOICES += same_division_choices("cultureChoice", "D018", "1/u", "specimen",
-                                 ("simple",), ("respiratory", "gastrointestinal", "genitourinary"))
+                                 ("simple",), ("respiratory", "gastrointestinal", "genitourinary",
+                                               "bloodOrPuncture", "other"))
 CHOICES += same_division_choices("cultureSiteGroup", "D018", "1/e", "performed_together",
-                                 ("respiratory", "gastrointestinal", "genitourinary"))
+                                 ("respiratory", "gastrointestinal", "genitourinary",
+                                  "bloodOrPuncture", "other"))
 
 # 通知の列挙と既存制約を確認した対。併施と同時は別の単位として保持する。
 CHOICES += same_division_choices(
@@ -750,7 +752,7 @@ CHOICES += tuple(
 
 # 同じ台帳項目に入る別の疾患・検査も存在するため、行だけで全適用条件の一致としない。
 CONDITIONAL_CHOICE_PROJECTIONS = {
-    "notice/D012/paragraph/12",
+    "notice/D012/paragraph/12", "notice/D018/paragraph/1/e",
     "notice/D004-2/paragraph/8", "notice/D004-2/paragraph/9",
     "notice/D007/paragraph/26", "notice/D013/paragraph/8",
     "notice/D006-22/paragraph/3", "notice/D006-24/paragraph/2",
@@ -781,6 +783,8 @@ CHOICE_PRIORITIES = {
 def matches_choice_direction(direction, keys, clause):
     if clause == "notice/D012/paragraph/32":
         return direction in {"1", "2"} and keys[int(direction) - 1][0] == "D018"
+    if clause == "notice/D018/paragraph/1/u":
+        return direction in {"1", "2"} and keys[int(direction) - 1] != ("D018", "simple")
     priority = CHOICE_PRIORITIES.get(clause)
     if priority is None:
         return direction == "3"
@@ -1464,6 +1468,17 @@ def check_choice_inventory():
     different = sorted(key for key in actual.keys() | expected.keys()
                        if actual.get(key) != expected.get(key))
     require(not different, f"選択群の索引射影が異なる: {different}")
+    typed_rows = projection["generic_typed_keys"]
+    typed = {clause: {tuple(item) for item in members} for clause, members in typed_rows}
+    require(len(typed) == len(typed_rows), "型付き選択群の条項IDが重複")
+    require(all(len(members) == len(typed[clause]) for clause, members in typed_rows),
+            "型付き選択群内の項目が重複")
+    status = dict(projection["generic_generation"])
+    require(set(typed) == {clause for clause, kind in status.items()
+                           if kind == "generated_checked_shape"},
+            "汎用生成で照合する条項の集合が不一致")
+    require(all(expected.get(clause) == members for clause, members in typed.items()),
+            "型付き項目キーとPythonの選択群索引が不一致")
     _write(INVENTORY / "specimen-selection-inventory.json", lean.stdout)
     return len(actual)
 

@@ -170,7 +170,7 @@ example :
     consistentSelections [⟨D017.sedimentChoice.source, [1, 2], 1⟩] [1] [1] = [] := by decide
 
 inductive BundleUnit where
-  | draw | specimen | day
+  | draw | specimen | day | series
   deriving DecidableEq, Repr
 
 /-- 準用の行き先と適用単位を確認した包括区分。 -/
@@ -191,6 +191,7 @@ def bundleKey (route : BundleRoute) (p : Performance α) : Option BundleKey := d
     | .draw => p.draw
     | .specimen => p.specimen
     | .day => some 0
+    | .series => p.series
   return ⟨route, p.site, identity⟩
 
 def assignedMembers (assignment : Performance α → Option BundleKey)
